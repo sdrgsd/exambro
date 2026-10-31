@@ -5,7 +5,6 @@ import android.content.SharedPreferences
 import com.example.model.ExamDefaults
 import com.example.model.ExamSettings
 import com.example.model.SavedExamUrl
-import com.example.model.WebCredential
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -22,7 +21,6 @@ class ExamPreferences(context: Context) {
         private const val KEY_IS_ALLOW_ZOOM = "is_allow_zoom"
         private const val KEY_IS_DESKTOP_MODE = "is_desktop_mode"
         private const val KEY_SAVED_URLS = "saved_urls_json"
-        private const val KEY_SAVED_CREDENTIALS = "saved_credentials_json"
     }
 
     fun getLastUrl(): String {
@@ -37,126 +35,31 @@ class ExamPreferences(context: Context) {
         prefs.edit().remove(KEY_LAST_URL).apply()
     }
 
-    fun normalizeHost(host: String): String {
-        var h = host.lowercase().trim()
-        if (h.startsWith("https://")) {
-            h = h.removePrefix("https://")
-        } else if (h.startsWith("http://")) {
-            h = h.removePrefix("http://")
-        }
-        if (h.contains("/")) {
-            h = h.substringBefore("/")
-        }
-        if (h.contains(":")) {
-            h = h.substringBefore(":")
-        }
-        if (h.startsWith("www.")) {
-            h = h.removePrefix("www.")
-        }
-        return h.trim()
-    }
-
-    fun getAllCredentials(): List<WebCredential> {
-        val jsonStr = prefs.getString(KEY_SAVED_CREDENTIALS, null) ?: return emptyList()
-        return try {
-            val array = JSONArray(jsonStr)
-            val list = mutableListOf<WebCredential>()
-            for (i in 0 until array.length()) {
-                val obj = array.getJSONObject(i)
-                list.add(
-                    WebCredential(
-                        id = obj.optString("id", UUID.randomUUID().toString()),
-                        host = obj.optString("host", ""),
-                        username = obj.optString("username", ""),
-                        password = obj.optString("password", ""),
-                        timestamp = obj.optLong("timestamp", System.currentTimeMillis())
-                    )
-                )
-            }
-            list
-        } catch (_: Exception) {
-            emptyList()
-        }
-    }
-
-    private fun saveCredentialsList(list: List<WebCredential>) {
-        val array = JSONArray()
-        list.forEach { cred ->
-            val obj = JSONObject().apply {
-                put("id", cred.id)
-                put("host", cred.host)
-                put("username", cred.username)
-                put("password", cred.password)
-                put("timestamp", cred.timestamp)
-            }
-            array.put(obj)
-        }
-        prefs.edit().putString(KEY_SAVED_CREDENTIALS, array.toString()).apply()
-    }
-
     fun saveWebCredential(host: String, username: String, password: String) {
-        val norm = normalizeHost(host)
-        if (norm.isBlank() || password.isBlank()) return
-        val list = getAllCredentials().toMutableList()
-        list.removeAll { (it.host == norm || it.host == host) && it.username == username }
-        list.add(0, WebCredential(host = norm, username = username, password = password))
-        saveCredentialsList(list)
-
-        val editor = prefs.edit()
-            .putString("cred_user_$norm", username)
-            .putString("cred_pass_$norm", password)
-        val rawTrim = host.lowercase().trim()
-        if (rawTrim != norm && rawTrim.isNotBlank()) {
-            editor.putString("cred_user_$rawTrim", username)
-                .putString("cred_pass_$rawTrim", password)
-        }
-        editor.apply()
-    }
-
-    fun getWebCredentials(host: String): List<WebCredential> {
-        val norm = normalizeHost(host)
-        val all = getAllCredentials()
-        if (norm.isBlank()) return all
-        val matches = all.filter { it.host == norm || it.host.contains(norm) || norm.contains(it.host) }
-        return if (matches.isNotEmpty()) matches else all
+        val cleanHost = host.lowercase().trim()
+        if (cleanHost.isBlank() || password.isBlank()) return
+        prefs.edit()
+            .putString("cred_user_$cleanHost", username)
+            .putString("cred_pass_$cleanHost", password)
+            .apply()
     }
 
     fun getWebCredential(host: String): Pair<String, String>? {
-        val list = getWebCredentials(host)
-        if (list.isNotEmpty()) {
-            return Pair(list.first().username, list.first().password)
+        val cleanHost = host.lowercase().trim()
+        val user = prefs.getString("cred_user_$cleanHost", null)
+        val pass = prefs.getString("cred_pass_$cleanHost", null)
+        return if (!pass.isNullOrEmpty()) {
+            Pair(user ?: "", pass)
+        } else {
+            null
         }
-        val norm = normalizeHost(host)
-        val u = prefs.getString("cred_user_$norm", null)
-        val p = prefs.getString("cred_pass_$norm", null)
-        if (!p.isNullOrEmpty()) return Pair(u ?: "", p)
-
-        val rawTrim = host.lowercase().trim()
-        val ru = prefs.getString("cred_user_$rawTrim", null)
-        val rp = prefs.getString("cred_pass_$rawTrim", null)
-        if (!rp.isNullOrEmpty()) return Pair(ru ?: "", rp)
-
-        return null
-    }
-
-    fun removeWebCredentialById(id: String) {
-        val list = getAllCredentials().toMutableList()
-        list.removeAll { it.id == id }
-        saveCredentialsList(list)
     }
 
     fun removeWebCredential(host: String) {
-        val norm = normalizeHost(host)
-        val rawTrim = host.lowercase().trim()
-        val list = getAllCredentials().toMutableList()
-        list.removeAll { it.host == norm || it.host == rawTrim }
-        saveCredentialsList(list)
-
+        val cleanHost = host.lowercase().trim()
         prefs.edit()
-            .remove("cred_user_$norm")
-            .remove("cred_pass_$norm")
-            .remove("cred_user_$rawTrim")
-            .remove("cred_pass_$rawTrim")
+            .remove("cred_user_$cleanHost")
+            .remove("cred_pass_$cleanHost")
             .apply()
     }
 

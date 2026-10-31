@@ -59,11 +59,9 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
-import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.QrCode
@@ -115,7 +113,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.example.data.ExamPreferences
 import com.example.model.ExamDefaults
-import com.example.model.WebCredential
 import com.example.util.QrCodeGenerator
 import kotlinx.coroutines.delay
 
@@ -126,17 +123,11 @@ data class PendingSaveCredential(
 )
 
 class WebPasswordBridge(
-    private val onOfferSave: (String, String, String) -> Unit,
-    private val onRequestShowPicker: (String) -> Unit
+    private val onOfferSave: (String, String, String) -> Unit
 ) {
     @JavascriptInterface
     fun onPasswordSubmitted(host: String, user: String, pass: String) {
         onOfferSave(host, user, pass)
-    }
-
-    @JavascriptInterface
-    fun onRequestShowCredentials(host: String) {
-        onRequestShowPicker(host)
     }
 }
 
@@ -169,9 +160,6 @@ fun SimpleBrowserScreen(
     var exitBubbleOffsetY by remember { mutableFloatStateOf(0f) }
     var manualUrlInput by remember { mutableStateOf("") }
     var pendingSaveCredential by remember { mutableStateOf<PendingSaveCredential?>(null) }
-    var showCredentialPickerModal by remember { mutableStateOf(false) }
-    var availableCredentials by remember { mutableStateOf<List<WebCredential>>(emptyList()) }
-    var currentHostRef by remember { mutableStateOf("") }
 
     var exitQrBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
 
@@ -288,15 +276,11 @@ fun SimpleBrowserScreen(
     }
 
     // Kunci Tombol Back Fisik & Virtual
-    BackHandler(enabled = showCredentialPickerModal) {
-        showCredentialPickerModal = false
-    }
-
-    BackHandler(enabled = isExamLocked && showExitScanModal && !showCredentialPickerModal) {
+    BackHandler(enabled = isExamLocked && showExitScanModal) {
         showExitScanModal = false
     }
 
-    BackHandler(enabled = isExamLocked && !showExitScanModal && !showCredentialPickerModal) {
+    BackHandler(enabled = isExamLocked && !showExitScanModal) {
         // MATI TOTAL saat ujian terkunci
     }
 
@@ -501,28 +485,16 @@ fun SimpleBrowserScreen(
                             webSettings.cacheMode = WebSettings.LOAD_DEFAULT
 
                             addJavascriptInterface(
-                                WebPasswordBridge(
-                                    onOfferSave = { host, user, pass ->
-                                        activity?.runOnUiThread {
-                                            if (host.isNotBlank() && pass.isNotBlank()) {
-                                                val existing = preferences?.getWebCredential(host)
-                                                if (existing == null || existing.second != pass) {
-                                                    pendingSaveCredential = PendingSaveCredential(host, user, pass)
-                                                }
-                                            }
-                                        }
-                                    },
-                                    onRequestShowPicker = { host ->
-                                        activity?.runOnUiThread {
-                                            currentHostRef = host
-                                            val list = preferences?.getWebCredentials(host) ?: emptyList()
-                                            if (list.isNotEmpty()) {
-                                                availableCredentials = list
-                                                showCredentialPickerModal = true
+                                WebPasswordBridge { host, user, pass ->
+                                    activity?.runOnUiThread {
+                                        if (host.isNotBlank() && pass.isNotBlank()) {
+                                            val existing = preferences?.getWebCredential(host)
+                                            if (existing == null || existing.second != pass) {
+                                                pendingSaveCredential = PendingSaveCredential(host, user, pass)
                                             }
                                         }
                                     }
-                                ),
+                                },
                                 "AndroidPasswordBridge"
                             )
 
@@ -580,119 +552,90 @@ fun SimpleBrowserScreen(
                                         null
                                     )
 
-                                    // Injeksi sederhana: saat siswa mengetuk kolom input apa pun, tampilkan daftar password tersimpan
-                                    val passwordManagerJs = """
+                                    // Pasang hook submit form untuk mendeteksi input password dan menawarkan simpan sandi
+                                    val passwordDetectorJs = """
                                         (function() {
-                                            function getUsernameInput(pwdInput) {
-                                                var form = pwdInput.form || pwdInput.closest('form') || document;
-                                                var inputs = Array.prototype.slice.call(form.querySelectorAll('input'));
-                                                var pwdIdx = inputs.indexOf(pwdInput);
-                                                var candidateInputs = pwdIdx > 0 ? inputs.slice(0, pwdIdx) : inputs;
-                                                for (var i = candidateInputs.length - 1; i >= 0; i--) {
-                                                    var inp = candidateInputs[i];
-                                                    if (inp.type === 'hidden' || inp.type === 'submit' || inp.type === 'button' || inp.type === 'checkbox' || inp.type === 'radio') continue;
-                                                    return inp;
-                                                }
-                                                return null;
-                                            }
-
-                                            function setVal(el, val) {
-                                                if (!el || val === undefined || val === null) return;
-                                                try {
-                                                    var proto = window.HTMLInputElement ? window.HTMLInputElement.prototype : null;
-                                                    var descriptor = proto ? Object.getOwnPropertyDescriptor(proto, 'value') : null;
-                                                    if (descriptor && descriptor.set) {
-                                                        descriptor.set.call(el, val);
-                                                    } else {
-                                                        el.value = val;
-                                                    }
-                                                } catch(e) {
-                                                    el.value = val;
-                                                }
-                                                el.dispatchEvent(new Event('input', { bubbles: true }));
-                                                el.dispatchEvent(new Event('change', { bubbles: true }));
-                                                el.dispatchEvent(new Event('blur', { bubbles: true }));
-                                            }
-
-                                            window.fillSavedAccount = function(username, password) {
-                                                try {
-                                                    var pwds = document.querySelectorAll('input[type="password"]');
-                                                    if (pwds.length > 0) {
-                                                        var p = pwds[0];
-                                                        setVal(p, password);
-                                                        var u = getUsernameInput(p);
-                                                        if (u) {
-                                                            setVal(u, username);
-                                                        }
-                                                    } else {
-                                                        var inputs = document.querySelectorAll('input');
-                                                        if (inputs.length > 0) {
-                                                            setVal(inputs[0], username);
-                                                        }
-                                                    }
-                                                } catch(e) {}
-                                            };
-
-                                            function captureCredentials() {
-                                                try {
-                                                    var pwds = document.querySelectorAll('input[type="password"]');
-                                                    for (var i = 0; i < pwds.length; i++) {
-                                                        var p = pwds[i];
-                                                        if (p && p.value) {
-                                                            var u = getUsernameInput(p);
-                                                            var uVal = u ? u.value : '';
-                                                            var hVal = window.location.hostname || window.location.host || '';
-                                                            if (window.AndroidPasswordBridge) {
-                                                                window.AndroidPasswordBridge.onPasswordSubmitted(hVal, uVal, p.value);
-                                                            }
-                                                            break;
-                                                        }
-                                                    }
-                                                } catch(e) {}
-                                            }
-
-                                            function onInputTapped() {
-                                                var hVal = window.location.hostname || window.location.host || '';
-                                                if (window.AndroidPasswordBridge) {
-                                                    window.AndroidPasswordBridge.onRequestShowCredentials(hVal);
-                                                }
-                                            }
-
-                                            function setupFormListeners() {
+                                            function attachSubmitHooks() {
                                                 var forms = document.querySelectorAll('form');
                                                 forms.forEach(function(f) {
                                                     if (f._hasExambroHook) return;
                                                     f._hasExambroHook = true;
-                                                    f.addEventListener('submit', captureCredentials);
+                                                    f.addEventListener('submit', function() {
+                                                        try {
+                                                            var pwd = f.querySelector('input[type="password"]');
+                                                            if (pwd && pwd.value) {
+                                                                var usr = f.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="nis"], input[name*="login"], input[name*="id"]');
+                                                                var uVal = usr ? usr.value : '';
+                                                                var hVal = window.location.hostname || '';
+                                                                if (window.AndroidPasswordBridge) {
+                                                                    window.AndroidPasswordBridge.onPasswordSubmitted(hVal, uVal, pwd.value);
+                                                                }
+                                                            }
+                                                        } catch(e) {}
+                                                    });
                                                 });
-
-                                                var btns = document.querySelectorAll('button, input[type="button"], input[type="submit"], [role="button"], .btn');
+                                                var btns = document.querySelectorAll('button, input[type="button"], input[type="submit"]');
                                                 btns.forEach(function(b) {
                                                     if (b._hasExambroHook) return;
                                                     b._hasExambroHook = true;
                                                     b.addEventListener('click', function() {
-                                                        setTimeout(captureCredentials, 60);
-                                                    });
-                                                });
-
-                                                var inputs = document.querySelectorAll('input');
-                                                inputs.forEach(function(inp) {
-                                                    if (inp._hasExambroHook) return;
-                                                    inp._hasExambroHook = true;
-                                                    inp.addEventListener('click', onInputTapped);
-                                                    inp.addEventListener('focus', onInputTapped);
-                                                    inp.addEventListener('keydown', function(ev) {
-                                                        if (ev.key === 'Enter' || ev.keyCode === 13) {
-                                                            captureCredentials();
-                                                        }
+                                                        setTimeout(function() {
+                                                            try {
+                                                                var pwd = document.querySelector('input[type="password"]');
+                                                                if (pwd && pwd.value) {
+                                                                    var usr = document.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="nis"], input[name*="login"], input[name*="id"]');
+                                                                    var uVal = usr ? usr.value : '';
+                                                                    var hVal = window.location.hostname || '';
+                                                                    if (window.AndroidPasswordBridge) {
+                                                                        window.AndroidPasswordBridge.onPasswordSubmitted(hVal, uVal, pwd.value);
+                                                                    }
+                                                                }
+                                                            } catch(e) {}
+                                                        }, 80);
                                                     });
                                                 });
                                             }
-
-                                            setupFormListeners();
+                                            attachSubmitHooks();
+                                            if (window.MutationObserver) {
+                                                new MutationObserver(attachSubmitHooks).observe(document.body || document.documentElement, { childList: true, subtree: true });
+                                            }
                                         })();
                                     """.trimIndent()
-                                    view?.evaluateJavascript(passwordManagerJs, null)
+                                    view?.evaluateJavascript(passwordDetectorJs, null)
+
+                                    // Lakukan autofill jika sebelumnya siswa sudah menyimpan kata sandi untuk situs ini
+                                    val currentHost = try {
+                                        if (!url.isNullOrBlank()) Uri.parse(url).host ?: "" else ""
+                                    } catch (_: Exception) { "" }
+
+                                    if (currentHost.isNotBlank()) {
+                                        val saved = preferences?.getWebCredential(currentHost)
+                                        if (saved != null) {
+                                            val safeUser = saved.first.replace("\\", "\\\\").replace("'", "\\'")
+                                            val safePass = saved.second.replace("\\", "\\\\").replace("'", "\\'")
+                                            val autoFillJs = """
+                                                (function() {
+                                                    setTimeout(function() {
+                                                        try {
+                                                            var pwd = document.querySelector('input[type="password"]');
+                                                            var usr = document.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="nis"], input[name*="login"], input[name*="id"]');
+                                                            if (usr && !usr.value) {
+                                                                usr.value = '$safeUser';
+                                                                usr.dispatchEvent(new Event('input', { bubbles: true }));
+                                                                usr.dispatchEvent(new Event('change', { bubbles: true }));
+                                                            }
+                                                            if (pwd && !pwd.value) {
+                                                                pwd.value = '$safePass';
+                                                                pwd.dispatchEvent(new Event('input', { bubbles: true }));
+                                                                pwd.dispatchEvent(new Event('change', { bubbles: true }));
+                                                            }
+                                                        } catch(e) {}
+                                                    }, 300);
+                                                })();
+                                            """.trimIndent()
+                                            view?.evaluateJavascript(autoFillJs, null)
+                                        }
+                                    }
                                 }
 
                                 override fun onReceivedError(
@@ -1209,118 +1152,6 @@ fun SimpleBrowserScreen(
                         modifier = Modifier.testTag("save_password_dismiss_button")
                     ) {
                         Text("Jangan Sekarang")
-                    }
-                }
-            )
-        }
-
-        // DIALOG DAFTAR PASSWORD TERSIMPAN (MUNCUL SAAT SISWA MENGETUK KOLOM FORMULIR)
-        if (showCredentialPickerModal && availableCredentials.isNotEmpty()) {
-            AlertDialog(
-                onDismissRequest = { showCredentialPickerModal = false },
-                icon = {
-                    Icon(
-                        imageVector = Icons.Default.Lock,
-                        contentDescription = "Kata Sandi",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                },
-                title = {
-                    Text(
-                        text = "Pilih Akun Tersimpan",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
-                    )
-                },
-                text = {
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = "Ketuk akun Anda untuk langsung mengisi kolom login:",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        availableCredentials.forEach { cred ->
-                            Card(
-                                onClick = {
-                                    val safeUser = cred.username.replace("\\", "\\\\").replace("'", "\\'")
-                                    val safePass = cred.password.replace("\\", "\\\\").replace("'", "\\'")
-                                    val fillJs = "if (window.fillSavedAccount) window.fillSavedAccount('$safeUser', '$safePass');"
-                                    webViewRef?.evaluateJavascript(fillJs, null)
-                                    showCredentialPickerModal = false
-                                },
-                                shape = RoundedCornerShape(12.dp),
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                                ),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("saved_credential_item_${cred.id}")
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(horizontal = 12.dp, vertical = 10.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.weight(1f)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.AccountCircle,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(32.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(10.dp))
-                                        Column {
-                                            Text(
-                                                text = if (cred.username.isNotBlank()) cred.username else "Akun Siswa",
-                                                style = MaterialTheme.typography.bodyLarge,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                            Text(
-                                                text = "••••••••",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                    IconButton(
-                                        onClick = {
-                                            preferences?.removeWebCredentialById(cred.id)
-                                            val updated = preferences?.getWebCredentials(currentHostRef) ?: emptyList()
-                                            availableCredentials = updated
-                                            if (updated.isEmpty()) {
-                                                showCredentialPickerModal = false
-                                            }
-                                        },
-                                        modifier = Modifier.size(36.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Delete,
-                                            contentDescription = "Hapus",
-                                            tint = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
-                                            modifier = Modifier.size(20.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
-                confirmButton = {},
-                dismissButton = {
-                    TextButton(
-                        onClick = { showCredentialPickerModal = false },
-                        modifier = Modifier.testTag("close_credential_picker_button")
-                    ) {
-                        Text("Batal")
                     }
                 }
             )

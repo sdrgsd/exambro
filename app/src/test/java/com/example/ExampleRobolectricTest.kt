@@ -71,17 +71,14 @@ class ExampleRobolectricTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val prefs = ExamPreferences(context)
 
-        prefs.saveWebCredential("http://192.168.1.100:8080/cbt", "siswa123", "rahasia2024")
-        val cred = prefs.getWebCredential("192.168.1.100")
+        prefs.saveWebCredential("cbt.sekolah.sch.id", "siswa123", "rahasia2024")
+        val cred = prefs.getWebCredential("cbt.sekolah.sch.id")
         assertNotNull(cred)
         assertEquals("siswa123", cred?.first)
         assertEquals("rahasia2024", cred?.second)
 
-        val credWithPort = prefs.getWebCredential("192.168.1.100:8080")
-        assertNotNull(credWithPort)
-        assertEquals("siswa123", credWithPort?.first)
-
-        prefs.removeWebCredential("192.168.1.100")
+        prefs.removeWebCredential("cbt.sekolah.sch.id")
+        assertEquals(null, prefs.getWebCredential("cbt.sekolah.sch.id"))
     }
 
     @Test
