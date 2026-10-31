@@ -63,4 +63,11 @@ class ExampleRobolectricTest {
         prefs.saveLastUrl("http://192.168.1.100")
         assertEquals("http://192.168.1.100", prefs.getLastUrl())
     }
+
+    @Test
+    fun `qr code generator produces non-null bitmap`() {
+        val token = com.example.util.QrCodeGenerator.getCurrentExitToken()
+        val bitmap = com.example.util.QrCodeGenerator.generateQrBitmap(token, 200)
+        assertNotNull(bitmap)
+    }
 }

@@ -1,7 +1,10 @@
 package com.example
 
 import com.example.model.ExamDefaults
+import com.example.util.QrCodeGenerator
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ExampleUnitTest {
@@ -33,5 +36,19 @@ class ExampleUnitTest {
     fun normalizeUrl_existingProtocol_preserved() {
         val result = ExamDefaults.normalizeUrl("http://cbt.sekolah.sch.id")
         assertEquals("http://cbt.sekolah.sch.id", result)
+    }
+
+    @Test
+    fun qrCodeGenerator_generatesDynamicToken() {
+        val token = QrCodeGenerator.getCurrentExitToken()
+        assertTrue(token.startsWith("EXIT_"))
+        assertEquals(13, token.length)
+        assertTrue(QrCodeGenerator.isTokenValid(token))
+    }
+
+    @Test
+    fun qrCodeGenerator_validatesMasterPin() {
+        assertTrue(QrCodeGenerator.isTokenValid("1234"))
+        assertTrue(!QrCodeGenerator.isTokenValid("wrong_token"))
     }
 }
