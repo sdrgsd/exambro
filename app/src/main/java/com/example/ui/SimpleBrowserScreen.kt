@@ -48,11 +48,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.QrCodeScanner
@@ -82,8 +85,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -125,6 +130,7 @@ fun SimpleBrowserScreen(
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
     var isExamLocked by remember { mutableStateOf(false) }
+    var isPageLoadedReady by remember { mutableStateOf(false) }
 
     var progress by remember { mutableIntStateOf(0) }
     var isLoading by remember { mutableStateOf(false) }
@@ -254,16 +260,24 @@ fun SimpleBrowserScreen(
         // MATI TOTAL saat ujian terkunci
     }
 
-    BackHandler(enabled = !isExamLocked) {
+    BackHandler(enabled = !isExamLocked && currentLoadedUrl.isNotBlank()) {
+        currentLoadedUrl = ""
+        isPageLoadedReady = false
+        progress = 0
+        webViewRef?.stopLoading()
+    }
+
+    BackHandler(enabled = !isExamLocked && currentLoadedUrl.isBlank()) {
         activity?.finish()
     }
 
-    fun startExamWithUrl(rawUrl: String) {
+    fun onQrDetected(rawUrl: String) {
         val normalized = ExamDefaults.normalizeUrl(rawUrl)
         currentLoadedUrl = normalized
         onUrlNavigated(normalized)
+        isPageLoadedReady = false
+        progress = 0
         webViewRef?.loadUrl(normalized)
-        isExamLocked = true
     }
 
     Box(
@@ -317,7 +331,7 @@ fun SimpleBrowserScreen(
                     CameraQrScannerBox(
                         boxSize = 260.dp,
                         onQrDetected = { detectedUrl ->
-                            startExamWithUrl(detectedUrl)
+                            onQrDetected(detectedUrl)
                         }
                     )
                 }
@@ -347,7 +361,8 @@ fun SimpleBrowserScreen(
                             isLongClickable = false
                             setOnLongClickListener { true }
 
-                            setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+                            // Gunakan akselerasi hardware standar dengan background putih bersih (cegah blank hitam)
+                            setBackgroundColor(android.graphics.Color.WHITE)
 
                             val cookieManager = CookieManager.getInstance()
                             cookieManager.setAcceptCookie(true)
@@ -387,6 +402,9 @@ fun SimpleBrowserScreen(
                                 override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                     progress = newProgress
                                     isLoading = newProgress < 100
+                                    if (newProgress >= 90) {
+                                        isPageLoadedReady = true
+                                    }
                                 }
 
                                 override fun onShowFileChooser(
@@ -422,6 +440,7 @@ fun SimpleBrowserScreen(
 
                                 override fun onPageFinished(view: WebView?, url: String?) {
                                     isLoading = false
+                                    isPageLoadedReady = true
                                     if (url != null) {
                                         currentLoadedUrl = url
                                         onUrlNavigated(url)
@@ -552,8 +571,8 @@ fun SimpleBrowserScreen(
                                 }
                             }
 
-                            if (initialUrl.isNotBlank()) {
-                                val target = ExamDefaults.normalizeUrl(initialUrl)
+                            if (currentLoadedUrl.isNotBlank()) {
+                                val target = ExamDefaults.normalizeUrl(currentLoadedUrl)
                                 loadUrl(target)
                             }
                             webViewRef = this
@@ -561,8 +580,130 @@ fun SimpleBrowserScreen(
                     },
                     update = { webView ->
                         webViewRef = webView
+                        if (currentLoadedUrl.isNotBlank() && webView.url == null) {
+                            val target = ExamDefaults.normalizeUrl(currentLoadedUrl)
+                            webView.loadUrl(target)
+                        }
                     }
                 )
+
+                // OVERLAY PERSIAPAN UJIAN DENGAN TOMBOL "MULAI"
+                if (!isExamLocked && currentLoadedUrl.isNotBlank()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.96f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Card(
+                            modifier = Modifier
+                                .padding(24.dp)
+                                .widthIn(max = 380.dp),
+                            shape = RoundedCornerShape(24.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 6.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 24.dp, vertical = 28.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                val domain = remember(currentLoadedUrl) {
+                                    try {
+                                        Uri.parse(currentLoadedUrl).host ?: currentLoadedUrl
+                                    } catch (_: Exception) {
+                                        currentLoadedUrl
+                                    }
+                                }
+
+                                val isReady = isPageLoadedReady || progress >= 90
+
+                                Icon(
+                                    imageVector = if (isReady) Icons.Default.CheckCircle else Icons.Default.Language,
+                                    contentDescription = null,
+                                    tint = if (isReady) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(48.dp)
+                                )
+
+                                Text(
+                                    text = domain,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+
+                                if (!isReady && progress < 90) {
+                                    Column(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        LinearProgressIndicator(
+                                            progress = { progress / 100f },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(6.dp),
+                                            color = MaterialTheme.colorScheme.primary,
+                                            trackColor = MaterialTheme.colorScheme.surfaceVariant
+                                        )
+                                        Text(
+                                            text = "Memuat halaman... $progress%",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                } else {
+                                    Text(
+                                        text = "Halaman siap",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = Color(0xFF2E7D32),
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+
+                                // Tombol "Mulai" saja
+                                Button(
+                                    onClick = {
+                                        isExamLocked = true
+                                    },
+                                    enabled = isReady,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(48.dp)
+                                        .testTag("start_exam_button"),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text(
+                                        text = "Mulai",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                TextButton(
+                                    onClick = {
+                                        currentLoadedUrl = ""
+                                        isPageLoadedReady = false
+                                        progress = 0
+                                        webViewRef?.stopLoading()
+                                    },
+                                    modifier = Modifier.testTag("rescan_qr_button")
+                                ) {
+                                    Text(
+                                        text = "Scan Ulang",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
 
                 // Indikator garis progres pemuatan tipis di bagian atas
                 if (isLoading && progress in 1..99) {
