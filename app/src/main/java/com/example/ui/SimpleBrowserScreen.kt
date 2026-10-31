@@ -232,7 +232,7 @@ fun SimpleBrowserScreen(
         fileUploadCallback = null
     }
 
-    // Kunci Sistem HP (Immersive Sticky, Blokir Screenshot, Layar Tetap Nyala)
+    // Kunci Sistem HP (Immersive Sticky, Blokir Screenshot, Layar Tetap Nyala, Lock Task Mode)
     DisposableEffect(isExamLocked) {
         val window = activity?.window
         if (isExamLocked) {
@@ -245,6 +245,10 @@ fun SimpleBrowserScreen(
                     WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                 controller.hide(WindowInsetsCompat.Type.systemBars())
             }
+
+            try {
+                activity?.startLockTask()
+            } catch (_: Exception) {}
         } else {
             window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -252,6 +256,10 @@ fun SimpleBrowserScreen(
                 val controller = WindowCompat.getInsetsController(window, window.decorView)
                 controller.show(WindowInsetsCompat.Type.systemBars())
             }
+
+            try {
+                activity?.stopLockTask()
+            } catch (_: Exception) {}
         }
 
         onDispose {
@@ -261,6 +269,9 @@ fun SimpleBrowserScreen(
                 val controller = WindowCompat.getInsetsController(window, window.decorView)
                 controller.show(WindowInsetsCompat.Type.systemBars())
             }
+            try {
+                activity?.stopLockTask()
+            } catch (_: Exception) {}
         }
     }
 
@@ -759,6 +770,9 @@ fun SimpleBrowserScreen(
                                 Button(
                                     onClick = {
                                         isExamLocked = true
+                                        try {
+                                            activity?.startLockTask()
+                                        } catch (_: Exception) {}
                                     },
                                     enabled = isReady,
                                     modifier = Modifier
@@ -1059,6 +1073,9 @@ fun SimpleBrowserScreen(
                         boxSize = 250.dp,
                         onQrDetected = { scannedCode ->
                             if (QrCodeGenerator.isTokenValid(scannedCode)) {
+                                try {
+                                    activity?.stopLockTask()
+                                } catch (_: Exception) {}
                                 isExamLocked = false
                                 showExitScanModal = false
                                 activity?.finish()
