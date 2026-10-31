@@ -36,6 +36,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,11 +46,13 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -75,6 +79,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -83,13 +88,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -138,8 +146,8 @@ fun SimpleBrowserScreen(
     // Dialog states
     var showFullscreenQrModal by remember { mutableStateOf(false) }
     var showExitScanModal by remember { mutableStateOf(false) }
-    var unlockInputCode by remember { mutableStateOf("") }
-    var unlockError by remember { mutableStateOf(false) }
+    var exitBubbleOffsetX by remember { mutableFloatStateOf(0f) }
+    var exitBubbleOffsetY by remember { mutableFloatStateOf(0f) }
     var pendingSaveCredential by remember { mutableStateOf<PendingSaveCredential?>(null) }
 
     var exitQrBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
@@ -256,7 +264,11 @@ fun SimpleBrowserScreen(
     }
 
     // Kunci Tombol Back Fisik & Virtual
-    BackHandler(enabled = isExamLocked) {
+    BackHandler(enabled = isExamLocked && showExitScanModal) {
+        showExitScanModal = false
+    }
+
+    BackHandler(enabled = isExamLocked && !showExitScanModal) {
         // MATI TOTAL saat ujian terkunci
     }
 
@@ -718,26 +730,58 @@ fun SimpleBrowserScreen(
                     )
                 }
 
-                // Tombol Scanner QR Keluar di Pojok Kanan Atas saat Ujian Terkunci
-                if (isExamLocked) {
-                    IconButton(
-                        onClick = {
-                            unlockInputCode = ""
-                            unlockError = false
-                            showExitScanModal = true
-                        },
+                // Tombol Balon Scanner QR Keluar Mengambang (Bisa Di-drag Bebas Kemana-mana)
+                if (isExamLocked && !showExitScanModal) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.88f),
+                        shadowElevation = 8.dp,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(10.dp)
-                            .size(34.dp)
-                            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f), RoundedCornerShape(17.dp))
+                            .padding(end = 16.dp, top = 76.dp)
+                            .offset { IntOffset(exitBubbleOffsetX.roundToInt(), exitBubbleOffsetY.roundToInt()) }
+                            .pointerInput(Unit) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    var dragged = false
+                                    var lastPos = down.position
+
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                        if (!change.pressed) {
+                                            if (!dragged) {
+                                                showExitScanModal = true
+                                            }
+                                            break
+                                        }
+                                        val diff = change.position - lastPos
+                                        if (!dragged && diff.getDistance() > 10f) {
+                                            dragged = true
+                                        }
+                                        if (dragged) {
+                                            exitBubbleOffsetX += diff.x
+                                            exitBubbleOffsetY += diff.y
+                                            change.consume()
+                                        }
+                                        lastPos = change.position
+                                    }
+                                }
+                            }
+                            .size(54.dp)
+                            .testTag("floating_exit_qr_bubble")
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.QrCodeScanner,
-                            contentDescription = "Scan QR Keluar",
-                            tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.QrCodeScanner,
+                                contentDescription = "Scan QR Keluar",
+                                tint = Color.White,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -791,87 +835,53 @@ fun SimpleBrowserScreen(
             }
         }
 
-        // MODAL SCANNER QR KELUAR UNTUK SISWA SAAT SELESAI
+        // OVERLAY SCANNER QR KELUAR LANGSUNG DI LAYAR UTAMA (TANPA DIALOG, BEBAS BLANK HITAM)
         if (showExitScanModal) {
-            Dialog(onDismissRequest = { showExitScanModal = false }) {
-                Card(
-                    shape = RoundedCornerShape(20.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = 0.94f)),
+                contentAlignment = Alignment.Center
+            ) {
+                // Tombol Silang (X) di Pojok Kanan Atas untuk menutup jika tidak sengaja terbuka
+                IconButton(
+                    onClick = { showExitScanModal = false },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .statusBarsPadding()
+                        .padding(16.dp)
+                        .size(48.dp)
+                        .testTag("close_exit_scanner_button")
                 ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        // Kotak Kamera Scan QR Keluar
-                        CameraQrScannerBox(
-                            boxSize = 220.dp,
-                            onQrDetected = { scannedCode ->
-                                if (QrCodeGenerator.isTokenValid(scannedCode)) {
-                                    isExamLocked = false
-                                    showExitScanModal = false
-                                    activity?.finish()
-                                }
-                            }
-                        )
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Tutup Scanner",
+                        tint = Color.White,
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
 
-                        // Input manual cadangan jika kamera bermasalah (Master PIN 1234)
-                        OutlinedTextField(
-                            value = unlockInputCode,
-                            onValueChange = {
-                                unlockInputCode = it
-                                unlockError = false
-                                if (QrCodeGenerator.isTokenValid(it)) {
-                                    isExamLocked = false
-                                    showExitScanModal = false
-                                    activity?.finish()
-                                }
-                            },
-                            placeholder = { Text("Kode QR / PIN (1234)") },
-                            singleLine = true,
-                            isError = unlockError,
-                            modifier = Modifier.fillMaxWidth(),
-                            keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Text,
-                                imeAction = ImeAction.Done
-                            ),
-                            keyboardActions = KeyboardActions(
-                                onDone = {
-                                    if (QrCodeGenerator.isTokenValid(unlockInputCode)) {
-                                        isExamLocked = false
-                                        showExitScanModal = false
-                                        activity?.finish()
-                                    } else {
-                                        unlockError = true
-                                    }
-                                }
-                            )
-                        )
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.End
-                        ) {
-                            TextButton(onClick = { showExitScanModal = false }) {
-                                Text("Batal")
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Button(
-                                onClick = {
-                                    if (QrCodeGenerator.isTokenValid(unlockInputCode)) {
-                                        isExamLocked = false
-                                        showExitScanModal = false
-                                        activity?.finish()
-                                    } else {
-                                        unlockError = true
-                                    }
-                                }
-                            ) {
-                                Text("Keluar")
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(20.dp)
+                ) {
+                    // Kotak Kamera Scan QR Keluar langsung di jendela utama (jernih dan responsif)
+                    CameraQrScannerBox(
+                        boxSize = 250.dp,
+                        onQrDetected = { scannedCode ->
+                            if (QrCodeGenerator.isTokenValid(scannedCode)) {
+                                isExamLocked = false
+                                showExitScanModal = false
+                                activity?.finish()
                             }
                         }
-                    }
+                    )
+
+                    Text(
+                        text = "Arahkan kamera ke QR Keluar Pengawas",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color.White.copy(alpha = 0.85f)
+                    )
                 }
             }
         }
