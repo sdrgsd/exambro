@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -60,6 +61,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.QrCode
@@ -92,6 +94,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -136,6 +139,7 @@ fun SimpleBrowserScreen(
     onUrlNavigated: (String) -> Unit
 ) {
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     val activity = context as? Activity
 
     var currentLoadedUrl by remember { mutableStateOf(initialUrl) }
@@ -150,6 +154,7 @@ fun SimpleBrowserScreen(
     // Dialog states
     var showQrMenuModal by remember { mutableStateOf(false) }
     var selectedQrTab by remember { mutableIntStateOf(0) } // 0: Pindai QR, 1: Kode QR
+    var isQrFullscreen by remember { mutableStateOf(false) }
     var showExitScanModal by remember { mutableStateOf(false) }
     var exitBubbleOffsetX by remember { mutableFloatStateOf(0f) }
     var exitBubbleOffsetY by remember { mutableFloatStateOf(0f) }
@@ -268,7 +273,11 @@ fun SimpleBrowserScreen(
         // MATI TOTAL saat ujian terkunci
     }
 
-    BackHandler(enabled = !isExamLocked && showQrMenuModal) {
+    BackHandler(enabled = !isExamLocked && showQrMenuModal && isQrFullscreen) {
+        isQrFullscreen = false
+    }
+
+    BackHandler(enabled = !isExamLocked && showQrMenuModal && !isQrFullscreen) {
         showQrMenuModal = false
     }
 
@@ -372,7 +381,27 @@ fun SimpleBrowserScreen(
 
                         IconButton(
                             onClick = {
+                                val clip = clipboardManager.getText()
+                                if (clip != null && clip.text.isNotBlank()) {
+                                    manualUrlInput = clip.text.trim()
+                                }
+                            },
+                            modifier = Modifier
+                                .size(46.dp)
+                                .testTag("paste_url_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentPaste,
+                                contentDescription = "Tempel URL",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
                                 selectedQrTab = 0
+                                isQrFullscreen = false
                                 showQrMenuModal = true
                             },
                             modifier = Modifier
@@ -858,7 +887,10 @@ fun SimpleBrowserScreen(
                             fontWeight = FontWeight.Bold
                         )
                         IconButton(
-                            onClick = { showQrMenuModal = false },
+                            onClick = {
+                                showQrMenuModal = false
+                                isQrFullscreen = false
+                            },
                             modifier = Modifier
                                 .size(40.dp)
                                 .testTag("close_qr_menu_button")
@@ -932,11 +964,14 @@ fun SimpleBrowserScreen(
                                         shape = RoundedCornerShape(24.dp),
                                         colors = CardDefaults.cardColors(containerColor = Color.White),
                                         elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-                                        modifier = Modifier.padding(24.dp)
+                                        modifier = Modifier
+                                            .padding(24.dp)
+                                            .clickable { isQrFullscreen = true }
+                                            .testTag("qr_card_tab")
                                     ) {
                                         Image(
                                             bitmap = bmp,
-                                            contentDescription = "Kode QR",
+                                            contentDescription = "Kode QR (Ketuk untuk Layar Penuh)",
                                             modifier = Modifier
                                                 .size(300.dp)
                                                 .padding(16.dp)
@@ -944,6 +979,45 @@ fun SimpleBrowserScreen(
                                     }
                                 }
                             }
+                        }
+                    }
+                }
+
+                // Tampilan Fullscreen saat QR di Tab 2 di-tap
+                if (isQrFullscreen) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.White)
+                            .clickable { isQrFullscreen = false }
+                            .testTag("fullscreen_qr_overlay"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        exitQrBitmap?.let { bmp ->
+                            Image(
+                                bitmap = bmp,
+                                contentDescription = "Kode QR Layar Penuh",
+                                modifier = Modifier
+                                    .fillMaxWidth(0.85f)
+                                    .aspectRatio(1f)
+                                    .padding(16.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = { isQrFullscreen = false },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .statusBarsPadding()
+                                .padding(16.dp)
+                                .size(48.dp)
+                                .testTag("close_fullscreen_qr_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Tutup Layar Penuh",
+                                tint = Color.Black,
+                                modifier = Modifier.size(28.dp)
+                            )
                         }
                     }
                 }
