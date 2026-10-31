@@ -31,6 +31,38 @@ class ExamPreferences(context: Context) {
         prefs.edit().putString(KEY_LAST_URL, url).apply()
     }
 
+    fun clearLastUrl() {
+        prefs.edit().remove(KEY_LAST_URL).apply()
+    }
+
+    fun saveWebCredential(host: String, username: String, password: String) {
+        val cleanHost = host.lowercase().trim()
+        if (cleanHost.isBlank() || password.isBlank()) return
+        prefs.edit()
+            .putString("cred_user_$cleanHost", username)
+            .putString("cred_pass_$cleanHost", password)
+            .apply()
+    }
+
+    fun getWebCredential(host: String): Pair<String, String>? {
+        val cleanHost = host.lowercase().trim()
+        val user = prefs.getString("cred_user_$cleanHost", null)
+        val pass = prefs.getString("cred_pass_$cleanHost", null)
+        return if (!pass.isNullOrEmpty()) {
+            Pair(user ?: "", pass)
+        } else {
+            null
+        }
+    }
+
+    fun removeWebCredential(host: String) {
+        val cleanHost = host.lowercase().trim()
+        prefs.edit()
+            .remove("cred_user_$cleanHost")
+            .remove("cred_pass_$cleanHost")
+            .apply()
+    }
+
     fun getSettings(): ExamSettings {
         return ExamSettings(
             url = prefs.getString(KEY_LAST_URL, "https://forms.google.com") ?: "https://forms.google.com",

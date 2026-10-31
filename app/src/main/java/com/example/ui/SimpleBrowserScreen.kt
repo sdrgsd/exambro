@@ -14,6 +14,8 @@ import android.net.http.SslError
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
 import android.webkit.SslErrorHandler
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -51,6 +53,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.AlertDialog
@@ -88,14 +91,31 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import com.example.data.ExamPreferences
 import com.example.model.ExamDefaults
 import com.example.util.QrCodeGenerator
 import kotlinx.coroutines.delay
 
+data class PendingSaveCredential(
+    val host: String,
+    val username: String,
+    val password: String
+)
+
+class WebPasswordBridge(
+    private val onOfferSave: (String, String, String) -> Unit
+) {
+    @JavascriptInterface
+    fun onPasswordSubmitted(host: String, user: String, pass: String) {
+        onOfferSave(host, user, pass)
+    }
+}
+
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun SimpleBrowserScreen(
-    initialUrl: String,
+    preferences: ExamPreferences? = null,
+    initialUrl: String = "",
     onUrlNavigated: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -114,6 +134,7 @@ fun SimpleBrowserScreen(
     var showExitScanModal by remember { mutableStateOf(false) }
     var unlockInputCode by remember { mutableStateOf("") }
     var unlockError by remember { mutableStateOf(false) }
+    var pendingSaveCredential by remember { mutableStateOf<PendingSaveCredential?>(null) }
 
     var exitQrBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
 
@@ -328,10 +349,15 @@ fun SimpleBrowserScreen(
 
                             setLayerType(View.LAYER_TYPE_SOFTWARE, null)
 
+                            val cookieManager = CookieManager.getInstance()
+                            cookieManager.setAcceptCookie(true)
+                            cookieManager.setAcceptThirdPartyCookies(this, true)
+
                             val webSettings = this.settings
                             webSettings.javaScriptEnabled = true
                             webSettings.domStorageEnabled = true
                             webSettings.databaseEnabled = true
+                            webSettings.saveFormData = true
                             webSettings.allowFileAccess = true
                             webSettings.allowContentAccess = true
                             webSettings.loadsImagesAutomatically = true
@@ -342,6 +368,20 @@ fun SimpleBrowserScreen(
                             webSettings.displayZoomControls = false
                             webSettings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                             webSettings.cacheMode = WebSettings.LOAD_DEFAULT
+
+                            addJavascriptInterface(
+                                WebPasswordBridge { host, user, pass ->
+                                    activity?.runOnUiThread {
+                                        if (host.isNotBlank() && pass.isNotBlank()) {
+                                            val existing = preferences?.getWebCredential(host)
+                                            if (existing == null || existing.second != pass) {
+                                                pendingSaveCredential = PendingSaveCredential(host, user, pass)
+                                            }
+                                        }
+                                    }
+                                },
+                                "AndroidPasswordBridge"
+                            )
 
                             webChromeClient = object : WebChromeClient() {
                                 override fun onProgressChanged(view: WebView?, newProgress: Int) {
@@ -392,6 +432,91 @@ fun SimpleBrowserScreen(
                                         "var style = document.createElement('style'); style.innerHTML = '* { -webkit-user-select: none !important; user-select: none !important; }'; document.head.appendChild(style);",
                                         null
                                     )
+
+                                    // Pasang hook submit form untuk mendeteksi input password dan menawarkan simpan sandi
+                                    val passwordDetectorJs = """
+                                        (function() {
+                                            function attachSubmitHooks() {
+                                                var forms = document.querySelectorAll('form');
+                                                forms.forEach(function(f) {
+                                                    if (f._hasExambroHook) return;
+                                                    f._hasExambroHook = true;
+                                                    f.addEventListener('submit', function() {
+                                                        try {
+                                                            var pwd = f.querySelector('input[type="password"]');
+                                                            if (pwd && pwd.value) {
+                                                                var usr = f.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="nis"], input[name*="login"], input[name*="id"]');
+                                                                var uVal = usr ? usr.value : '';
+                                                                var hVal = window.location.hostname || '';
+                                                                if (window.AndroidPasswordBridge) {
+                                                                    window.AndroidPasswordBridge.onPasswordSubmitted(hVal, uVal, pwd.value);
+                                                                }
+                                                            }
+                                                        } catch(e) {}
+                                                    });
+                                                });
+                                                var btns = document.querySelectorAll('button, input[type="button"], input[type="submit"]');
+                                                btns.forEach(function(b) {
+                                                    if (b._hasExambroHook) return;
+                                                    b._hasExambroHook = true;
+                                                    b.addEventListener('click', function() {
+                                                        setTimeout(function() {
+                                                            try {
+                                                                var pwd = document.querySelector('input[type="password"]');
+                                                                if (pwd && pwd.value) {
+                                                                    var usr = document.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="nis"], input[name*="login"], input[name*="id"]');
+                                                                    var uVal = usr ? usr.value : '';
+                                                                    var hVal = window.location.hostname || '';
+                                                                    if (window.AndroidPasswordBridge) {
+                                                                        window.AndroidPasswordBridge.onPasswordSubmitted(hVal, uVal, pwd.value);
+                                                                    }
+                                                                }
+                                                            } catch(e) {}
+                                                        }, 80);
+                                                    });
+                                                });
+                                            }
+                                            attachSubmitHooks();
+                                            if (window.MutationObserver) {
+                                                new MutationObserver(attachSubmitHooks).observe(document.body || document.documentElement, { childList: true, subtree: true });
+                                            }
+                                        })();
+                                    """.trimIndent()
+                                    view?.evaluateJavascript(passwordDetectorJs, null)
+
+                                    // Lakukan autofill jika sebelumnya siswa sudah menyimpan kata sandi untuk situs ini
+                                    val currentHost = try {
+                                        if (!url.isNullOrBlank()) Uri.parse(url).host ?: "" else ""
+                                    } catch (_: Exception) { "" }
+
+                                    if (currentHost.isNotBlank()) {
+                                        val saved = preferences?.getWebCredential(currentHost)
+                                        if (saved != null) {
+                                            val safeUser = saved.first.replace("\\", "\\\\").replace("'", "\\'")
+                                            val safePass = saved.second.replace("\\", "\\\\").replace("'", "\\'")
+                                            val autoFillJs = """
+                                                (function() {
+                                                    setTimeout(function() {
+                                                        try {
+                                                            var pwd = document.querySelector('input[type="password"]');
+                                                            var usr = document.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="nis"], input[name*="login"], input[name*="id"]');
+                                                            if (usr && !usr.value) {
+                                                                usr.value = '$safeUser';
+                                                                usr.dispatchEvent(new Event('input', { bubbles: true }));
+                                                                usr.dispatchEvent(new Event('change', { bubbles: true }));
+                                                            }
+                                                            if (pwd && !pwd.value) {
+                                                                pwd.value = '$safePass';
+                                                                pwd.dispatchEvent(new Event('input', { bubbles: true }));
+                                                                pwd.dispatchEvent(new Event('change', { bubbles: true }));
+                                                            }
+                                                        } catch(e) {}
+                                                    }, 300);
+                                                })();
+                                            """.trimIndent()
+                                            view?.evaluateJavascript(autoFillJs, null)
+                                        }
+                                    }
                                 }
 
                                 override fun onReceivedError(
@@ -608,6 +733,71 @@ fun SimpleBrowserScreen(
                     }
                 }
             }
+        }
+
+        // DIALOG TAWARAN SIMPAN KATA SANDI
+        pendingSaveCredential?.let { cred ->
+            AlertDialog(
+                onDismissRequest = { pendingSaveCredential = null },
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = "Simpan Sandi",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                },
+                title = {
+                    Text(
+                        text = "Simpan Sandi?",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "Apakah Anda ingin menyimpan kata sandi untuk situs ini?",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Text(
+                            text = "Situs: ${cred.host}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (cred.username.isNotBlank()) {
+                            Text(
+                                text = "Pengguna: ${cred.username}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Kata sandi akan otomatis terisi saat Anda membuka halaman login berikutnya.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            preferences?.saveWebCredential(cred.host, cred.username, cred.password)
+                            pendingSaveCredential = null
+                        },
+                        modifier = Modifier.testTag("save_password_confirm_button")
+                    ) {
+                        Text("Simpan")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { pendingSaveCredential = null },
+                        modifier = Modifier.testTag("save_password_dismiss_button")
+                    ) {
+                        Text("Jangan Sekarang")
+                    }
+                }
+            )
         }
     }
 }

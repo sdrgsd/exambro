@@ -56,12 +56,29 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `preferences save and get last url`() {
+    fun `preferences save and get last url and clear`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val prefs = ExamPreferences(context)
 
         prefs.saveLastUrl("http://192.168.1.100")
         assertEquals("http://192.168.1.100", prefs.getLastUrl())
+        prefs.clearLastUrl()
+        assertEquals("", prefs.getLastUrl())
+    }
+
+    @Test
+    fun `preferences save and retrieve web credentials`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = ExamPreferences(context)
+
+        prefs.saveWebCredential("cbt.sekolah.sch.id", "siswa123", "rahasia2024")
+        val cred = prefs.getWebCredential("cbt.sekolah.sch.id")
+        assertNotNull(cred)
+        assertEquals("siswa123", cred?.first)
+        assertEquals("rahasia2024", cred?.second)
+
+        prefs.removeWebCredential("cbt.sekolah.sch.id")
+        assertEquals(null, prefs.getWebCredential("cbt.sekolah.sch.id"))
     }
 
     @Test

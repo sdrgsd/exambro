@@ -19,13 +19,18 @@ class MainActivity : ComponentActivity() {
         setContent {
             MyApplicationTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    val preferences = remember { ExamPreferences(this) }
-                    val initialUrl = remember { preferences.getLastUrl() }
+                    val preferences = remember {
+                        ExamPreferences(this).apply {
+                            clearLastUrl()
+                        }
+                    }
 
                     SimpleBrowserScreen(
-                        initialUrl = initialUrl,
-                        onUrlNavigated = { url ->
-                            preferences.saveLastUrl(url)
+                        preferences = preferences,
+                        initialUrl = "",
+                        onUrlNavigated = { _ ->
+                            // URL sengaja tidak disimpan ke memori internal
+                            // agar saat aplikasi ditutup/HP mati, URL selalu kosong dan wajib scan ulang
                         }
                     )
                 }
