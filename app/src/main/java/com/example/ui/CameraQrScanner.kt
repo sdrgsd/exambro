@@ -43,6 +43,7 @@ import java.util.concurrent.Executors
 fun CameraQrScannerBox(
     modifier: Modifier = Modifier,
     boxSize: Dp = 260.dp,
+    isFullscreen: Boolean = false,
     onQrDetected: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -66,12 +67,20 @@ fun CameraQrScannerBox(
         }
     }
 
-    Box(
-        modifier = modifier
+    val boxModifier = if (isFullscreen) {
+        modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    } else {
+        modifier
             .size(boxSize)
             .clip(RoundedCornerShape(24.dp))
             .border(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f), RoundedCornerShape(24.dp))
-            .background(Color.Black),
+            .background(Color.Black)
+    }
+
+    Box(
+        modifier = boxModifier,
         contentAlignment = Alignment.Center
     ) {
         if (hasCameraPermission && lifecycleOwner != null) {

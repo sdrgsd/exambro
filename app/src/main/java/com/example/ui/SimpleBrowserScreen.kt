@@ -57,6 +57,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Language
@@ -73,6 +74,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -94,6 +97,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -144,18 +148,20 @@ fun SimpleBrowserScreen(
     var isLoading by remember { mutableStateOf(false) }
 
     // Dialog states
-    var showFullscreenQrModal by remember { mutableStateOf(false) }
+    var showQrMenuModal by remember { mutableStateOf(false) }
+    var selectedQrTab by remember { mutableIntStateOf(0) } // 0: Pindai QR, 1: Kode QR
     var showExitScanModal by remember { mutableStateOf(false) }
     var exitBubbleOffsetX by remember { mutableFloatStateOf(0f) }
     var exitBubbleOffsetY by remember { mutableFloatStateOf(0f) }
+    var manualUrlInput by remember { mutableStateOf("") }
     var pendingSaveCredential by remember { mutableStateOf<PendingSaveCredential?>(null) }
 
     var exitQrBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
 
-    // Dynamic QR generation: updates token every 5 seconds while fullscreen QR is open
-    LaunchedEffect(showFullscreenQrModal) {
-        if (showFullscreenQrModal) {
-            while (showFullscreenQrModal) {
+    // Dynamic QR generation: updates token every 5 seconds while Kode QR tab is open
+    LaunchedEffect(showQrMenuModal, selectedQrTab) {
+        if (showQrMenuModal && selectedQrTab == 1) {
+            while (showQrMenuModal && selectedQrTab == 1) {
                 val token = QrCodeGenerator.getCurrentExitToken()
                 exitQrBitmap = QrCodeGenerator.generateQrBitmap(token, 800)
                 delay(5000L)
@@ -221,7 +227,7 @@ fun SimpleBrowserScreen(
         fileUploadCallback = null
     }
 
-    // Kunci Sistem HP (Lock Task Mode, Immersive Sticky, Blokir Screenshot, Layar Tetap Nyala)
+    // Kunci Sistem HP (Immersive Sticky, Blokir Screenshot, Layar Tetap Nyala)
     DisposableEffect(isExamLocked) {
         val window = activity?.window
         if (isExamLocked) {
@@ -234,10 +240,6 @@ fun SimpleBrowserScreen(
                     WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
                 controller.hide(WindowInsetsCompat.Type.systemBars())
             }
-
-            try {
-                activity?.startLockTask()
-            } catch (_: Exception) {}
         } else {
             window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -245,9 +247,6 @@ fun SimpleBrowserScreen(
                 val controller = WindowCompat.getInsetsController(window, window.decorView)
                 controller.show(WindowInsetsCompat.Type.systemBars())
             }
-            try {
-                activity?.stopLockTask()
-            } catch (_: Exception) {}
         }
 
         onDispose {
@@ -257,9 +256,6 @@ fun SimpleBrowserScreen(
                 val controller = WindowCompat.getInsetsController(window, window.decorView)
                 controller.show(WindowInsetsCompat.Type.systemBars())
             }
-            try {
-                activity?.stopLockTask()
-            } catch (_: Exception) {}
         }
     }
 
@@ -272,14 +268,18 @@ fun SimpleBrowserScreen(
         // MATI TOTAL saat ujian terkunci
     }
 
-    BackHandler(enabled = !isExamLocked && currentLoadedUrl.isNotBlank()) {
+    BackHandler(enabled = !isExamLocked && showQrMenuModal) {
+        showQrMenuModal = false
+    }
+
+    BackHandler(enabled = !isExamLocked && !showQrMenuModal && currentLoadedUrl.isNotBlank()) {
         currentLoadedUrl = ""
         isPageLoadedReady = false
         progress = 0
         webViewRef?.stopLoading()
     }
 
-    BackHandler(enabled = !isExamLocked && currentLoadedUrl.isBlank()) {
+    BackHandler(enabled = !isExamLocked && !showQrMenuModal && currentLoadedUrl.isBlank()) {
         activity?.finish()
     }
 
@@ -302,30 +302,86 @@ fun SimpleBrowserScreen(
             Column(
                 modifier = Modifier.fillMaxSize()
             ) {
-                // Bilah Atas: Hanya tombol QR Keluar (tanpa logo)
+                // Bilah Atas: Address Bar + Tombol QR
                 Surface(
                     modifier = Modifier
                         .fillMaxWidth()
                         .statusBarsPadding(),
                     color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 1.dp
+                    tonalElevation = 2.dp
                 ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 8.dp),
-                        horizontalArrangement = Arrangement.End,
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(
-                            onClick = { showFullscreenQrModal = true },
+                        OutlinedTextField(
+                            value = manualUrlInput,
+                            onValueChange = { manualUrlInput = it },
+                            placeholder = {
+                                Text(
+                                    text = "Ketik URL / IP ujian...",
+                                    style = MaterialTheme.typography.bodyMedium
+                                )
+                            },
+                            singleLine = true,
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = Icons.Default.Language,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            trailingIcon = {
+                                if (manualUrlInput.isNotBlank()) {
+                                    IconButton(
+                                        onClick = {
+                                            onQrDetected(manualUrlInput.trim())
+                                        },
+                                        modifier = Modifier.size(36.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                                            contentDescription = "Buka URL",
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            },
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Uri,
+                                imeAction = ImeAction.Go
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onGo = {
+                                    if (manualUrlInput.isNotBlank()) {
+                                        onQrDetected(manualUrlInput.trim())
+                                    }
+                                }
+                            ),
+                            shape = RoundedCornerShape(24.dp),
                             modifier = Modifier
-                                .size(42.dp)
-                                .testTag("qr_fullscreen_button")
+                                .weight(1f)
+                                .height(52.dp)
+                                .testTag("address_bar_input")
+                        )
+
+                        IconButton(
+                            onClick = {
+                                selectedQrTab = 0
+                                showQrMenuModal = true
+                            },
+                            modifier = Modifier
+                                .size(46.dp)
+                                .testTag("qr_menu_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.QrCode,
-                                contentDescription = "QR Keluar Fullscreen",
+                                contentDescription = "Menu QR",
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(26.dp)
                             )
@@ -333,20 +389,12 @@ fun SimpleBrowserScreen(
                     }
                 }
 
-                // Kotak Kamera Scanner di Tengah Layar (tanpa teks/logo, bersih)
+                // Tampilan Tengah Dikosongkan Bersih Sesuai Permintaan
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    CameraQrScannerBox(
-                        boxSize = 260.dp,
-                        onQrDetected = { detectedUrl ->
-                            onQrDetected(detectedUrl)
-                        }
-                    )
-                }
+                        .weight(1f)
+                )
             }
         }
 
@@ -787,49 +835,116 @@ fun SimpleBrowserScreen(
             }
         }
 
-        // FULLSCREEN QR DIALOG UNTUK GURU: Langsung Layar Penuh QR
-        if (showFullscreenQrModal) {
-            Dialog(
-                onDismissRequest = { showFullscreenQrModal = false },
-                properties = DialogProperties(usePlatformDefaultWidth = false)
+        // MODAL MENU QR DENGAN 2 TAB: "QR" dan "Scan QR"
+        if (showQrMenuModal) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.surface)
+                    .statusBarsPadding()
             ) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.White)
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() }
-                        ) {
-                            showFullscreenQrModal = false
-                        },
-                    contentAlignment = Alignment.Center
-                ) {
-                    exitQrBitmap?.let { bmp ->
-                        Image(
-                            bitmap = bmp,
-                            contentDescription = "Fullscreen QR Keluar",
+                Column(modifier = Modifier.fillMaxSize()) {
+                    // Bilah Atas Modal: Judul & Tombol Tutup (X)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Menu QR",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        IconButton(
+                            onClick = { showQrMenuModal = false },
                             modifier = Modifier
-                                .size(320.dp)
-                                .padding(16.dp)
+                                .size(40.dp)
+                                .testTag("close_qr_menu_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Tutup",
+                                tint = MaterialTheme.colorScheme.onSurface,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+
+                    // 2 TAB: "Pindai QR" dan "Kode QR"
+                    TabRow(
+                        selectedTabIndex = selectedQrTab,
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        contentColor = MaterialTheme.colorScheme.primary
+                    ) {
+                        Tab(
+                            selected = selectedQrTab == 0,
+                            onClick = { selectedQrTab = 0 },
+                            text = { Text("Pindai QR", fontWeight = FontWeight.SemiBold) },
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Default.QrCodeScanner,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                        )
+                        Tab(
+                            selected = selectedQrTab == 1,
+                            onClick = { selectedQrTab = 1 },
+                            text = { Text("Kode QR", fontWeight = FontWeight.SemiBold) },
+                            icon = {
+                                Icon(
+                                    imageVector = Icons.Default.QrCode,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
                         )
                     }
 
-                    // Tombol silang kecil di pojok untuk kembali
-                    IconButton(
-                        onClick = { showFullscreenQrModal = false },
+                    // Konten Tab Berdasarkan Pilihan
+                    Box(
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .statusBarsPadding()
-                            .padding(16.dp)
-                            .size(40.dp)
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = "Tutup",
-                            tint = Color.DarkGray,
-                            modifier = Modifier.size(24.dp)
-                        )
+                        if (selectedQrTab == 0) {
+                            // TAB 1: Pindai QR (Kamera Tampilan Penuh di Bawah Tab Tanpa Kotak & Tanpa Teks)
+                            CameraQrScannerBox(
+                                modifier = Modifier.fillMaxSize(),
+                                isFullscreen = true,
+                                onQrDetected = { detectedUrl ->
+                                    showQrMenuModal = false
+                                    onQrDetected(detectedUrl)
+                                }
+                            )
+                        } else {
+                            // TAB 2: Kode QR (Benar-benar Hanya Kode QR Tanpa Informasi Lain)
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                exitQrBitmap?.let { bmp ->
+                                    Card(
+                                        shape = RoundedCornerShape(24.dp),
+                                        colors = CardDefaults.cardColors(containerColor = Color.White),
+                                        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
+                                        modifier = Modifier.padding(24.dp)
+                                    ) {
+                                        Image(
+                                            bitmap = bmp,
+                                            contentDescription = "Kode QR",
+                                            modifier = Modifier
+                                                .size(300.dp)
+                                                .padding(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
