@@ -1,0 +1,37 @@
+package com.example
+
+import com.example.model.ExamDefaults
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class ExampleUnitTest {
+    @Test
+    fun normalizeUrl_empty_returnsDefaultGoogleForms() {
+        val result = ExamDefaults.normalizeUrl("")
+        assertEquals("https://forms.google.com", result)
+    }
+
+    @Test
+    fun normalizeUrl_ipAddress_prependsHttp() {
+        val result = ExamDefaults.normalizeUrl("192.168.1.100")
+        assertEquals("http://192.168.1.100", result)
+    }
+
+    @Test
+    fun normalizeUrl_localhost_prependsHttp() {
+        val result = ExamDefaults.normalizeUrl("localhost:8080/cbt")
+        assertEquals("http://localhost:8080/cbt", result)
+    }
+
+    @Test
+    fun normalizeUrl_domain_prependsHttps() {
+        val result = ExamDefaults.normalizeUrl("pusmendik.kemdikbud.go.id/anbk")
+        assertEquals("https://pusmendik.kemdikbud.go.id/anbk", result)
+    }
+
+    @Test
+    fun normalizeUrl_existingProtocol_preserved() {
+        val result = ExamDefaults.normalizeUrl("http://cbt.sekolah.sch.id")
+        assertEquals("http://cbt.sekolah.sch.id", result)
+    }
+}

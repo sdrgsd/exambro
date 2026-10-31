@@ -1,0 +1,6 @@
+{
+  "name": "ExamBrowser",
+  "description": "Peramban ujian sekolah sederhana dan andal untuk memuat halaman web ujian CBT, kuis, dan formulir dengan mode layar penuh aman.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
