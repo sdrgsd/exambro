@@ -39,6 +39,12 @@ class ExampleUnitTest {
     }
 
     @Test
+    fun normalizeUrl_fileProtocol_preserved() {
+        val result = ExamDefaults.normalizeUrl("file:///data/user/0/com.example/cache/exam_page.html")
+        assertEquals("file:///data/user/0/com.example/cache/exam_page.html", result)
+    }
+
+    @Test
     fun qrCodeGenerator_generatesDynamicToken() {
         val token = QrCodeGenerator.getCurrentExitToken()
         assertTrue(token.startsWith("EXIT_"))

@@ -156,6 +156,17 @@ fun SimpleBrowserScreen(
     var progress by remember { mutableIntStateOf(0) }
     var isLoading by remember { mutableStateOf(false) }
 
+    LaunchedEffect(initialUrl) {
+        if (initialUrl.isNotBlank() && initialUrl != currentLoadedUrl) {
+            val target = ExamDefaults.normalizeUrl(initialUrl)
+            currentLoadedUrl = target
+            onUrlNavigated(target)
+            isPageLoadedReady = false
+            progress = 0
+            webViewRef?.loadUrl(target)
+        }
+    }
+
     // Dialog states
     var showQrMenuModal by remember { mutableStateOf(false) }
     var selectedQrTab by remember { mutableIntStateOf(0) } // 0: Pindai QR, 1: Kode QR
@@ -503,6 +514,8 @@ fun SimpleBrowserScreen(
                             webSettings.saveFormData = true
                             webSettings.allowFileAccess = true
                             webSettings.allowContentAccess = true
+                            webSettings.allowFileAccessFromFileURLs = true
+                            webSettings.allowUniversalAccessFromFileURLs = true
                             webSettings.loadsImagesAutomatically = true
                             webSettings.useWideViewPort = true
                             webSettings.loadWithOverviewMode = true
@@ -745,7 +758,11 @@ fun SimpleBrowserScreen(
                             ) {
                                 val domain = remember(currentLoadedUrl) {
                                     try {
-                                        Uri.parse(currentLoadedUrl).host ?: currentLoadedUrl
+                                        if (currentLoadedUrl.startsWith("file://")) {
+                                            "Berkas HTML Ujian (Lokal)"
+                                        } else {
+                                            Uri.parse(currentLoadedUrl).host ?: currentLoadedUrl
+                                        }
                                     } catch (_: Exception) {
                                         currentLoadedUrl
                                     }

@@ -71,7 +71,9 @@ object ExamDefaults {
         if (trimmed.isEmpty()) return "https://forms.google.com"
 
         if (trimmed.startsWith("http://", ignoreCase = true) ||
-            trimmed.startsWith("https://", ignoreCase = true)
+            trimmed.startsWith("https://", ignoreCase = true) ||
+            trimmed.startsWith("file://", ignoreCase = true) ||
+            trimmed.startsWith("content://", ignoreCase = true)
         ) {
             return trimmed
         }
