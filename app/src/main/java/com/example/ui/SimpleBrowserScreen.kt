@@ -6,6 +6,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
+import android.widget.Toast
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -63,6 +64,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
@@ -101,6 +103,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -119,6 +122,7 @@ import androidx.core.view.WindowInsetsControllerCompat
 import com.example.data.ExamPreferences
 import com.example.model.ExamDefaults
 import com.example.util.QrCodeGenerator
+import com.example.util.TotpManager
 import kotlinx.coroutines.delay
 
 data class PendingSaveCredential(
@@ -169,31 +173,15 @@ fun SimpleBrowserScreen(
 
     // Dialog states
     var showQrMenuModal by remember { mutableStateOf(false) }
-    var selectedQrTab by remember { mutableIntStateOf(0) } // 0: Pindai QR, 1: Kode QR
-    var isQrFullscreen by remember { mutableStateOf(false) }
     var showExitScanModal by remember { mutableStateOf(false) }
     var exitBubbleOffsetX by remember { mutableFloatStateOf(0f) }
     var exitBubbleOffsetY by remember { mutableFloatStateOf(0f) }
     var manualUrlInput by remember { mutableStateOf("") }
     var pendingSaveCredential by remember { mutableStateOf<PendingSaveCredential?>(null) }
 
-    var exitQrBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
-    var exitSixDigitCode by remember { mutableStateOf("") }
     var isAppPinned by remember { mutableStateOf(false) }
     var exitCodeInput by remember { mutableStateOf("") }
     var exitErrorMessage by remember { mutableStateOf<String?>(null) }
-
-    // Dynamic QR generation: updates token and 6-digit code every 5 seconds while Kode QR tab is open
-    LaunchedEffect(showQrMenuModal, selectedQrTab) {
-        if (showQrMenuModal && selectedQrTab == 1) {
-            while (showQrMenuModal && selectedQrTab == 1) {
-                val token = QrCodeGenerator.getCurrentExitToken()
-                exitQrBitmap = QrCodeGenerator.generateQrBitmap(token, 800)
-                exitSixDigitCode = QrCodeGenerator.getSixDigitCode()
-                delay(5000L)
-            }
-        }
-    }
 
     // Pantau status Sematkan Aplikasi (Screen Pinning / LockTaskMode)
     LaunchedEffect(isExamLocked) {
@@ -321,11 +309,7 @@ fun SimpleBrowserScreen(
         // MATI TOTAL saat ujian terkunci
     }
 
-    BackHandler(enabled = !isExamLocked && showQrMenuModal && isQrFullscreen) {
-        isQrFullscreen = false
-    }
-
-    BackHandler(enabled = !isExamLocked && showQrMenuModal && !isQrFullscreen) {
+    BackHandler(enabled = !isExamLocked && showQrMenuModal) {
         showQrMenuModal = false
     }
 
@@ -448,8 +432,23 @@ fun SimpleBrowserScreen(
 
                         IconButton(
                             onClick = {
-                                selectedQrTab = 0
-                                isQrFullscreen = false
+                                clipboardManager.setText(AnnotatedString(TotpManager.SETUP_KEY))
+                                Toast.makeText(context, "Kode disalin", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier
+                                .size(46.dp)
+                                .testTag("copy_setup_key_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.ContentCopy,
+                                contentDescription = "Salin Kode Penyiapan",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
                                 showQrMenuModal = true
                             },
                             modifier = Modifier
@@ -457,10 +456,10 @@ fun SimpleBrowserScreen(
                                 .testTag("qr_menu_button")
                         ) {
                             Icon(
-                                imageVector = Icons.Default.QrCode,
-                                contentDescription = "Menu QR",
+                                imageVector = Icons.Default.QrCodeScanner,
+                                contentDescription = "Pindai QR",
                                 tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(26.dp)
+                                modifier = Modifier.size(24.dp)
                             )
                         }
                     }
@@ -930,7 +929,7 @@ fun SimpleBrowserScreen(
             }
         }
 
-        // MODAL MENU QR DENGAN 2 TAB: "QR" dan "Scan QR"
+        // MODAL PINDAI QR (HANYA PEMINDAI KAMERA UNTUK LINK SOAL UJIAN)
         if (showQrMenuModal) {
             Box(
                 modifier = Modifier
@@ -948,15 +947,12 @@ fun SimpleBrowserScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Menu QR",
+                            text = "Pindai QR",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
                         IconButton(
-                            onClick = {
-                                showQrMenuModal = false
-                                isQrFullscreen = false
-                            },
+                            onClick = { showQrMenuModal = false },
                             modifier = Modifier
                                 .size(40.dp)
                                 .testTag("close_qr_menu_button")
@@ -970,159 +966,17 @@ fun SimpleBrowserScreen(
                         }
                     }
 
-                    // 2 TAB: "Pindai QR" dan "Kode QR"
-                    TabRow(
-                        selectedTabIndex = selectedQrTab,
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        contentColor = MaterialTheme.colorScheme.primary
-                    ) {
-                        Tab(
-                            selected = selectedQrTab == 0,
-                            onClick = { selectedQrTab = 0 },
-                            text = { Text("Pindai QR", fontWeight = FontWeight.SemiBold) },
-                            icon = {
-                                Icon(
-                                    imageVector = Icons.Default.QrCodeScanner,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        )
-                        Tab(
-                            selected = selectedQrTab == 1,
-                            onClick = { selectedQrTab = 1 },
-                            text = { Text("Kode QR", fontWeight = FontWeight.SemiBold) },
-                            icon = {
-                                Icon(
-                                    imageVector = Icons.Default.QrCode,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                        )
-                    }
-
-                    // Konten Tab Berdasarkan Pilihan
-                    Box(
+                    // Kamera Pindai QR Tampilan Penuh
+                    CameraQrScannerBox(
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        if (selectedQrTab == 0) {
-                            // TAB 1: Pindai QR (Kamera Tampilan Penuh di Bawah Tab Tanpa Kotak & Tanpa Teks)
-                            CameraQrScannerBox(
-                                modifier = Modifier.fillMaxSize(),
-                                isFullscreen = true,
-                                onQrDetected = { detectedUrl ->
-                                    showQrMenuModal = false
-                                    onQrDetected(detectedUrl)
-                                }
-                            )
-                        } else {
-                            // TAB 2: Kode QR (Benar-benar Hanya Kode QR Tanpa Informasi Lain)
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                exitQrBitmap?.let { bmp ->
-                                    Card(
-                                        shape = RoundedCornerShape(24.dp),
-                                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                                        elevation = CardDefaults.cardElevation(defaultElevation = 6.dp),
-                                        modifier = Modifier
-                                            .padding(24.dp)
-                                            .clickable { isQrFullscreen = true }
-                                            .testTag("qr_card_tab")
-                                    ) {
-                                        Column(
-                                            horizontalAlignment = Alignment.CenterHorizontally,
-                                            modifier = Modifier.padding(20.dp)
-                                        ) {
-                                            Image(
-                                                bitmap = bmp,
-                                                contentDescription = "Kode QR (Ketuk untuk Layar Penuh)",
-                                                modifier = Modifier.size(260.dp)
-                                            )
-                                            if (exitSixDigitCode.isNotBlank()) {
-                                                Spacer(modifier = Modifier.height(14.dp))
-                                                val formatted = if (exitSixDigitCode.length == 6) {
-                                                    "${exitSixDigitCode.take(3)} ${exitSixDigitCode.takeLast(3)}"
-                                                } else exitSixDigitCode
-                                                Text(
-                                                    text = formatted,
-                                                    style = MaterialTheme.typography.headlineMedium.copy(
-                                                        letterSpacing = 4.sp,
-                                                        fontWeight = FontWeight.Bold
-                                                    ),
-                                                    color = Color.Black
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                        isFullscreen = true,
+                        onQrDetected = { detectedUrl ->
+                            showQrMenuModal = false
+                            onQrDetected(detectedUrl)
                         }
-                    }
-                }
-
-                // Tampilan Fullscreen saat QR di Tab 2 di-tap
-                if (isQrFullscreen) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color.White)
-                            .clickable { isQrFullscreen = false }
-                            .testTag("fullscreen_qr_overlay"),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.Center,
-                            modifier = Modifier.padding(24.dp)
-                        ) {
-                            exitQrBitmap?.let { bmp ->
-                                Image(
-                                    bitmap = bmp,
-                                    contentDescription = "Kode QR Layar Penuh",
-                                    modifier = Modifier
-                                        .fillMaxWidth(0.82f)
-                                        .aspectRatio(1f)
-                                        .padding(12.dp)
-                                )
-                            }
-                            if (exitSixDigitCode.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(20.dp))
-                                val formatted = if (exitSixDigitCode.length == 6) {
-                                    "${exitSixDigitCode.take(3)} ${exitSixDigitCode.takeLast(3)}"
-                                } else exitSixDigitCode
-                                Text(
-                                    text = formatted,
-                                    style = MaterialTheme.typography.displaySmall.copy(
-                                        letterSpacing = 6.sp,
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = Color.Black
-                                )
-                            }
-                        }
-                        IconButton(
-                            onClick = { isQrFullscreen = false },
-                            modifier = Modifier
-                                .align(Alignment.TopEnd)
-                                .statusBarsPadding()
-                                .padding(16.dp)
-                                .size(48.dp)
-                                .testTag("close_fullscreen_qr_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Tutup Layar Penuh",
-                                tint = Color.Black,
-                                modifier = Modifier.size(28.dp)
-                            )
-                        }
-                    }
+                    )
                 }
             }
         }
@@ -1178,7 +1032,7 @@ fun SimpleBrowserScreen(
                     )
 
                     Text(
-                        text = "Arahkan kamera ke QR atau masukkan 6 digit kode:",
+                        text = "Masukkan 6 digit kode dari Google Authenticator:",
                         style = MaterialTheme.typography.bodyMedium,
                         color = Color.White.copy(alpha = 0.85f),
                         textAlign = TextAlign.Center

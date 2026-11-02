@@ -53,8 +53,8 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun qrCodeGenerator_validatesMasterPin() {
-        assertTrue(QrCodeGenerator.isTokenValid("1234"))
+    fun qrCodeGenerator_rejectsInvalidTokensAndPin1234() {
+        assertTrue(!QrCodeGenerator.isTokenValid("1234"))
         assertTrue(!QrCodeGenerator.isTokenValid("wrong_token"))
     }
 
@@ -65,5 +65,16 @@ class ExampleUnitTest {
         assertTrue(code.all { it.isDigit() })
         assertTrue(QrCodeGenerator.isTokenValid(code))
         assertTrue(QrCodeGenerator.isTokenValid("${code.take(3)} ${code.takeLast(3)}"))
+    }
+
+    @Test
+    fun totpManager_generatesAndValidatesCode() {
+        val code = com.example.util.TotpManager.generateTotp()
+        assertEquals(6, code.length)
+        assertTrue(code.all { it.isDigit() })
+        assertTrue(com.example.util.TotpManager.isCodeValid(code))
+        assertTrue(com.example.util.TotpManager.isCodeValid("${code.take(3)} ${code.takeLast(3)}"))
+        assertTrue(!com.example.util.TotpManager.isCodeValid("1234"))
+        assertTrue(!com.example.util.TotpManager.isCodeValid("00000000"))
     }
 }

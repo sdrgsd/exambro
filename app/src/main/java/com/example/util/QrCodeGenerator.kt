@@ -63,7 +63,7 @@ object QrCodeGenerator {
      */
     fun isTokenValid(token: String): Boolean {
         val trimmed = token.trim().replace(" ", "").replace("-", "")
-        if (trimmed == "1234") return true
+        if (TotpManager.isCodeValid(trimmed)) return true
 
         val currentStep = System.currentTimeMillis() / 30000L
         for (step in listOf(currentStep, currentStep - 1, currentStep + 1)) {
