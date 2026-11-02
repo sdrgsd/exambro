@@ -66,12 +66,14 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -156,6 +158,7 @@ fun SimpleBrowserScreen(
 
     var isExamLocked by remember { mutableStateOf(false) }
     var isPageLoadedReady by remember { mutableStateOf(false) }
+    var hasPageLoadError by remember { mutableStateOf(false) }
 
     var progress by remember { mutableIntStateOf(0) }
     var isLoading by remember { mutableStateOf(false) }
@@ -165,6 +168,7 @@ fun SimpleBrowserScreen(
             val target = ExamDefaults.normalizeUrl(initialUrl)
             currentLoadedUrl = target
             onUrlNavigated(target)
+            hasPageLoadError = false
             isPageLoadedReady = false
             progress = 0
             webViewRef?.loadUrl(target)
@@ -328,6 +332,7 @@ fun SimpleBrowserScreen(
         val normalized = ExamDefaults.normalizeUrl(rawUrl)
         currentLoadedUrl = normalized
         onUrlNavigated(normalized)
+        hasPageLoadError = false
         isPageLoadedReady = false
         progress = 0
         webViewRef?.loadUrl(normalized)
@@ -572,6 +577,8 @@ fun SimpleBrowserScreen(
                             webViewClient = object : WebViewClient() {
                                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                                     isLoading = true
+                                    hasPageLoadError = false
+                                    isPageLoadedReady = false
                                     if (url != null) {
                                         currentLoadedUrl = url
                                         onUrlNavigated(url)
@@ -580,7 +587,9 @@ fun SimpleBrowserScreen(
 
                                 override fun onPageFinished(view: WebView?, url: String?) {
                                     isLoading = false
-                                    isPageLoadedReady = true
+                                    if (!hasPageLoadError) {
+                                        isPageLoadedReady = true
+                                    }
                                     if (url != null) {
                                         currentLoadedUrl = url
                                         onUrlNavigated(url)
@@ -683,7 +692,23 @@ fun SimpleBrowserScreen(
                                     request: WebResourceRequest?,
                                     error: WebResourceError?
                                 ) {
-                                    // Sinyal gagal terputus ditangani, reload akan terpicu otomatis saat koneksi kembali
+                                    if (request == null || request.isForMainFrame) {
+                                        hasPageLoadError = true
+                                        isPageLoadedReady = false
+                                        isLoading = false
+                                    }
+                                }
+
+                                @Deprecated("Deprecated in Java")
+                                override fun onReceivedError(
+                                    view: WebView?,
+                                    errorCode: Int,
+                                    description: String?,
+                                    failingUrl: String?
+                                ) {
+                                    hasPageLoadError = true
+                                    isPageLoadedReady = false
+                                    isLoading = false
                                 }
 
                                 override fun onReceivedSslError(
@@ -767,12 +792,24 @@ fun SimpleBrowserScreen(
                                     }
                                 }
 
-                                val isReady = isPageLoadedReady || progress >= 90
+                                val isReady = !hasPageLoadError && (isPageLoadedReady || progress >= 90)
 
                                 Icon(
-                                    imageVector = if (isReady) Icons.Default.CheckCircle else Icons.Default.Language,
+                                    imageVector = if (hasPageLoadError) {
+                                        Icons.Default.Error
+                                    } else if (isReady) {
+                                        Icons.Default.CheckCircle
+                                    } else {
+                                        Icons.Default.Language
+                                    },
                                     contentDescription = null,
-                                    tint = if (isReady) Color(0xFF2E7D32) else MaterialTheme.colorScheme.primary,
+                                    tint = if (hasPageLoadError) {
+                                        MaterialTheme.colorScheme.error
+                                    } else if (isReady) {
+                                        Color(0xFF2E7D32)
+                                    } else {
+                                        MaterialTheme.colorScheme.primary
+                                    },
                                     modifier = Modifier.size(48.dp)
                                 )
 
@@ -784,7 +821,14 @@ fun SimpleBrowserScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
 
-                                if (!isReady && progress < 90) {
+                                if (hasPageLoadError) {
+                                    Text(
+                                        text = "Halaman Gagal Dimuat",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                } else if (!isReady && progress < 90) {
                                     Column(
                                         modifier = Modifier.fillMaxWidth(),
                                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -815,42 +859,48 @@ fun SimpleBrowserScreen(
 
                                 Spacer(modifier = Modifier.height(4.dp))
 
-                                // Tombol "Mulai" saja
-                                Button(
-                                    onClick = {
-                                        isExamLocked = true
-                                        try {
-                                            activity?.startLockTask()
-                                        } catch (_: Exception) {}
-                                    },
-                                    enabled = isReady,
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(48.dp)
-                                        .testTag("start_exam_button"),
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Text(
-                                        text = "Mulai",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-
-                                TextButton(
-                                    onClick = {
-                                        currentLoadedUrl = ""
-                                        isPageLoadedReady = false
-                                        progress = 0
-                                        webViewRef?.stopLoading()
-                                    },
-                                    modifier = Modifier.testTag("rescan_qr_button")
-                                ) {
-                                    Text(
-                                        text = "Scan Ulang",
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                if (hasPageLoadError) {
+                                    Button(
+                                        onClick = {
+                                            hasPageLoadError = false
+                                            isPageLoadedReady = false
+                                            progress = 0
+                                            val target = ExamDefaults.normalizeUrl(currentLoadedUrl)
+                                            webViewRef?.loadUrl(target)
+                                        },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(48.dp)
+                                            .testTag("retry_load_button"),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text(
+                                            text = "Coba Lagi",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = {
+                                            isExamLocked = true
+                                            try {
+                                                activity?.startLockTask()
+                                            } catch (_: Exception) {}
+                                        },
+                                        enabled = isReady,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(48.dp)
+                                            .testTag("start_exam_button"),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text(
+                                            text = "Mulai",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
                             }
                         }
