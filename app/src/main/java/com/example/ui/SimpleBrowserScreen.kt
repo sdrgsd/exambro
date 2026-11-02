@@ -96,6 +96,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -470,15 +471,7 @@ fun SimpleBrowserScreen(
             exit = fadeOut()
         ) {
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .then(
-                        if (isExamLocked && isAppPinned) {
-                            Modifier.border(width = 4.dp, color = Color(0xFF10B981))
-                        } else {
-                            Modifier
-                        }
-                    )
+                modifier = Modifier.fillMaxSize()
             ) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
@@ -721,6 +714,11 @@ fun SimpleBrowserScreen(
                         }
                     }
                 )
+
+                // Watermark halus penanda status Sematkan Aplikasi aktif jika siswa memilih "Mengerti"
+                if (isExamLocked && isAppPinned) {
+                    PinnedWatermarkOverlay()
+                }
 
                 // OVERLAY PERSIAPAN UJIAN DENGAN TOMBOL "MULAI"
                 if (!isExamLocked && currentLoadedUrl.isNotBlank()) {
@@ -1318,6 +1316,47 @@ fun SimpleBrowserScreen(
                     }
                 }
             )
+        }
+    }
+}
+
+/**
+ * Watermark halus yang menandakan bahwa siswa telah menyetujui "Sematkan Aplikasi" (App Pinning).
+ * Tampil transparan dan diagonal di layar sehingga pengawas mudah melihatnya tanpa mengganggu keterbacaan soal.
+ */
+@Composable
+fun PinnedWatermarkOverlay(modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .testTag("pinned_watermark_overlay"),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { rotationZ = -28f },
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceEvenly
+        ) {
+            repeat(6) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    repeat(2) {
+                        Text(
+                            text = "SEMATKAN AKTIF",
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 3.sp
+                            ),
+                            color = Color(0xFF1B5E20).copy(alpha = 0.08f),
+                            maxLines = 1
+                        )
+                    }
+                }
+            }
         }
     }
 }
