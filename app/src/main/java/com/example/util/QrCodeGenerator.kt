@@ -11,6 +11,22 @@ import java.security.MessageDigest
 
 object QrCodeGenerator {
     /**
+     * Generates a 6-digit dynamic numeric code (like Google Authenticator TOTP)
+     * derived from the 30-second timeStep.
+     */
+    fun getSixDigitCode(timeStep: Long = System.currentTimeMillis() / 30000L): String {
+        val raw = "EXAM_BROWSER_EXIT_$timeStep"
+        val md = MessageDigest.getInstance("SHA-256")
+        val digest = md.digest(raw.toByteArray())
+        val offset = (digest.last().toInt() and 0x0f)
+        val binary = ((digest[offset].toInt() and 0x7f) shl 24) or
+                ((digest[offset + 1].toInt() and 0xff) shl 16) or
+                ((digest[offset + 2].toInt() and 0xff) shl 8) or
+                (digest[offset + 3].toInt() and 0xff)
+        return (binary % 1_000_000).toString().padStart(6, '0')
+    }
+
+    /**
      * Generates a dynamic exit token that changes every 30 seconds.
      */
     fun getCurrentExitToken(): String {
@@ -43,14 +59,21 @@ object QrCodeGenerator {
     }
 
     /**
-     * Validates if a token matches the current or recent (last 30s) dynamic exit code or master PIN.
+     * Validates if a token matches the current or recent (last 30s) dynamic exit code, 6-digit numeric code, or master PIN.
      */
     fun isTokenValid(token: String): Boolean {
-        val trimmed = token.trim()
+        val trimmed = token.trim().replace(" ", "").replace("-", "")
         if (trimmed == "1234") return true
 
         val currentStep = System.currentTimeMillis() / 30000L
-        for (step in listOf(currentStep, currentStep - 1)) {
+        for (step in listOf(currentStep, currentStep - 1, currentStep + 1)) {
+            // Validasi jika memasukkan 6 digit angka numerik
+            val sixDigit = getSixDigitCode(step)
+            if (trimmed == sixDigit || trimmed.equals("EXIT_$sixDigit", ignoreCase = true)) {
+                return true
+            }
+
+            // Validasi jika memindai QR token
             val raw = "EXAM_BROWSER_EXIT_$step"
             val md = MessageDigest.getInstance("SHA-256")
             val hash = md.digest(raw.toByteArray()).joinToString("") { "%02x".format(it) }

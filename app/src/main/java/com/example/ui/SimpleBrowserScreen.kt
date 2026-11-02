@@ -2,6 +2,7 @@ package com.example.ui
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -34,6 +35,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -75,6 +77,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -104,6 +107,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -162,15 +166,34 @@ fun SimpleBrowserScreen(
     var pendingSaveCredential by remember { mutableStateOf<PendingSaveCredential?>(null) }
 
     var exitQrBitmap by remember { mutableStateOf<ImageBitmap?>(null) }
+    var exitSixDigitCode by remember { mutableStateOf("") }
+    var isAppPinned by remember { mutableStateOf(false) }
+    var exitCodeInput by remember { mutableStateOf("") }
+    var exitErrorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Dynamic QR generation: updates token every 5 seconds while Kode QR tab is open
+    // Dynamic QR generation: updates token and 6-digit code every 5 seconds while Kode QR tab is open
     LaunchedEffect(showQrMenuModal, selectedQrTab) {
         if (showQrMenuModal && selectedQrTab == 1) {
             while (showQrMenuModal && selectedQrTab == 1) {
                 val token = QrCodeGenerator.getCurrentExitToken()
                 exitQrBitmap = QrCodeGenerator.generateQrBitmap(token, 800)
+                exitSixDigitCode = QrCodeGenerator.getSixDigitCode()
                 delay(5000L)
             }
+        }
+    }
+
+    // Pantau status Sematkan Aplikasi (Screen Pinning / LockTaskMode)
+    LaunchedEffect(isExamLocked) {
+        if (isExamLocked) {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            while (isExamLocked) {
+                val state = am?.lockTaskModeState ?: ActivityManager.LOCK_TASK_MODE_NONE
+                isAppPinned = (state != ActivityManager.LOCK_TASK_MODE_NONE)
+                delay(500L)
+            }
+        } else {
+            isAppPinned = false
         }
     }
 
@@ -278,6 +301,8 @@ fun SimpleBrowserScreen(
     // Kunci Tombol Back Fisik & Virtual
     BackHandler(enabled = isExamLocked && showExitScanModal) {
         showExitScanModal = false
+        exitCodeInput = ""
+        exitErrorMessage = null
     }
 
     BackHandler(enabled = isExamLocked && !showExitScanModal) {
@@ -444,7 +469,17 @@ fun SimpleBrowserScreen(
             enter = fadeIn(),
             exit = fadeOut()
         ) {
-            Box(modifier = Modifier.fillMaxSize()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(
+                        if (isExamLocked && isAppPinned) {
+                            Modifier.border(width = 4.dp, color = Color(0xFF10B981))
+                        } else {
+                            Modifier
+                        }
+                    )
+            ) {
                 AndroidView(
                     modifier = Modifier.fillMaxSize(),
                     factory = { ctx ->
@@ -842,6 +877,8 @@ fun SimpleBrowserScreen(
                                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                         if (!change.pressed) {
                                             if (!dragged) {
+                                                exitCodeInput = ""
+                                                exitErrorMessage = null
                                                 showExitScanModal = true
                                             }
                                             break
@@ -983,13 +1020,30 @@ fun SimpleBrowserScreen(
                                             .clickable { isQrFullscreen = true }
                                             .testTag("qr_card_tab")
                                     ) {
-                                        Image(
-                                            bitmap = bmp,
-                                            contentDescription = "Kode QR (Ketuk untuk Layar Penuh)",
-                                            modifier = Modifier
-                                                .size(300.dp)
-                                                .padding(16.dp)
-                                        )
+                                        Column(
+                                            horizontalAlignment = Alignment.CenterHorizontally,
+                                            modifier = Modifier.padding(20.dp)
+                                        ) {
+                                            Image(
+                                                bitmap = bmp,
+                                                contentDescription = "Kode QR (Ketuk untuk Layar Penuh)",
+                                                modifier = Modifier.size(260.dp)
+                                            )
+                                            if (exitSixDigitCode.isNotBlank()) {
+                                                Spacer(modifier = Modifier.height(14.dp))
+                                                val formatted = if (exitSixDigitCode.length == 6) {
+                                                    "${exitSixDigitCode.take(3)} ${exitSixDigitCode.takeLast(3)}"
+                                                } else exitSixDigitCode
+                                                Text(
+                                                    text = formatted,
+                                                    style = MaterialTheme.typography.headlineMedium.copy(
+                                                        letterSpacing = 4.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    ),
+                                                    color = Color.Black
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1007,15 +1061,35 @@ fun SimpleBrowserScreen(
                             .testTag("fullscreen_qr_overlay"),
                         contentAlignment = Alignment.Center
                     ) {
-                        exitQrBitmap?.let { bmp ->
-                            Image(
-                                bitmap = bmp,
-                                contentDescription = "Kode QR Layar Penuh",
-                                modifier = Modifier
-                                    .fillMaxWidth(0.85f)
-                                    .aspectRatio(1f)
-                                    .padding(16.dp)
-                            )
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier.padding(24.dp)
+                        ) {
+                            exitQrBitmap?.let { bmp ->
+                                Image(
+                                    bitmap = bmp,
+                                    contentDescription = "Kode QR Layar Penuh",
+                                    modifier = Modifier
+                                        .fillMaxWidth(0.82f)
+                                        .aspectRatio(1f)
+                                        .padding(12.dp)
+                                )
+                            }
+                            if (exitSixDigitCode.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(20.dp))
+                                val formatted = if (exitSixDigitCode.length == 6) {
+                                    "${exitSixDigitCode.take(3)} ${exitSixDigitCode.takeLast(3)}"
+                                } else exitSixDigitCode
+                                Text(
+                                    text = formatted,
+                                    style = MaterialTheme.typography.displaySmall.copy(
+                                        letterSpacing = 6.sp,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = Color.Black
+                                )
+                            }
                         }
                         IconButton(
                             onClick = { isQrFullscreen = false },
@@ -1048,7 +1122,11 @@ fun SimpleBrowserScreen(
             ) {
                 // Tombol Silang (X) di Pojok Kanan Atas untuk menutup jika tidak sengaja terbuka
                 IconButton(
-                    onClick = { showExitScanModal = false },
+                    onClick = {
+                        showExitScanModal = false
+                        exitCodeInput = ""
+                        exitErrorMessage = null
+                    },
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .statusBarsPadding()
@@ -1066,11 +1144,12 @@ fun SimpleBrowserScreen(
 
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(20.dp)
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    modifier = Modifier.padding(horizontal = 24.dp)
                 ) {
                     // Kotak Kamera Scan QR Keluar langsung di jendela utama (jernih dan responsif)
                     CameraQrScannerBox(
-                        boxSize = 250.dp,
+                        boxSize = 220.dp,
                         onQrDetected = { scannedCode ->
                             if (QrCodeGenerator.isTokenValid(scannedCode)) {
                                 try {
@@ -1084,10 +1163,94 @@ fun SimpleBrowserScreen(
                     )
 
                     Text(
-                        text = "Arahkan kamera ke QR Keluar Pengawas",
+                        text = "Arahkan kamera ke QR atau masukkan 6 digit kode:",
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.85f)
+                        color = Color.White.copy(alpha = 0.85f),
+                        textAlign = TextAlign.Center
                     )
+
+                    // Input Numerik Sederhana & Tombol Keluar
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = exitCodeInput,
+                            onValueChange = { input ->
+                                if (input.length <= 6 && input.all { it.isDigit() }) {
+                                    exitCodeInput = input
+                                    exitErrorMessage = null
+                                }
+                            },
+                            placeholder = {
+                                Text(
+                                    text = "6 digit kode...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Color.White.copy(alpha = 0.5f)
+                                )
+                            },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Number,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = {
+                                    if (QrCodeGenerator.isTokenValid(exitCodeInput)) {
+                                        try {
+                                            activity?.stopLockTask()
+                                        } catch (_: Exception) {}
+                                        isExamLocked = false
+                                        showExitScanModal = false
+                                        activity?.finish()
+                                    } else {
+                                        exitErrorMessage = "Kode tidak valid"
+                                    }
+                                }
+                            ),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White,
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = Color.White.copy(alpha = 0.4f),
+                                cursorColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .width(160.dp)
+                                .height(52.dp)
+                                .testTag("exit_numeric_input")
+                        )
+
+                        Button(
+                            onClick = {
+                                if (QrCodeGenerator.isTokenValid(exitCodeInput)) {
+                                    try {
+                                        activity?.stopLockTask()
+                                    } catch (_: Exception) {}
+                                    isExamLocked = false
+                                    showExitScanModal = false
+                                    activity?.finish()
+                                } else {
+                                    exitErrorMessage = "Kode tidak valid"
+                                }
+                            },
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .height(52.dp)
+                                .testTag("exit_numeric_button")
+                        ) {
+                            Text("Keluar", fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    if (exitErrorMessage != null) {
+                        Text(
+                            text = exitErrorMessage!!,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             }
         }

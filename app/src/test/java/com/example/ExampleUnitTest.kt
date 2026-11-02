@@ -51,4 +51,13 @@ class ExampleUnitTest {
         assertTrue(QrCodeGenerator.isTokenValid("1234"))
         assertTrue(!QrCodeGenerator.isTokenValid("wrong_token"))
     }
+
+    @Test
+    fun qrCodeGenerator_generatesAndValidatesSixDigitCode() {
+        val code = QrCodeGenerator.getSixDigitCode()
+        assertEquals(6, code.length)
+        assertTrue(code.all { it.isDigit() })
+        assertTrue(QrCodeGenerator.isTokenValid(code))
+        assertTrue(QrCodeGenerator.isTokenValid("${code.take(3)} ${code.takeLast(3)}"))
+    }
 }

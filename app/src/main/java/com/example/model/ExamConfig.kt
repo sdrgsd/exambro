@@ -24,6 +24,14 @@ data class SavedExamUrl(
     val timestamp: Long = System.currentTimeMillis()
 )
 
+data class WebCredential(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val host: String,
+    val username: String,
+    val password: String,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
 object ExamDefaults {
     val PRESETS = listOf(
         PresetUrl(
