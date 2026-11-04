@@ -1,4 +1,7 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 plugins {
   alias(libs.plugins.android.application)
@@ -16,10 +19,13 @@ android {
     applicationId = "com.aistudio.exambrowser.vkwytz"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = 2
+    versionName = "1.1"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    val buildDate = SimpleDateFormat("dd/MM/yy HH:mm", Locale.getDefault()).format(Date())
+    buildConfigField("String", "BUILD_TIME", "\"$buildDate\"")
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,

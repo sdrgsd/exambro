@@ -51,11 +51,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import com.example.BuildConfig
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -71,6 +73,7 @@ import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.QrCodeScanner
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -80,6 +83,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -123,6 +127,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.example.data.ExamPreferences
 import com.example.model.ExamDefaults
+import com.example.util.AlarmHelper
 import com.example.util.QrCodeGenerator
 import com.example.util.TotpManager
 import kotlinx.coroutines.delay
@@ -177,27 +182,51 @@ fun SimpleBrowserScreen(
 
     // Dialog states
     var showQrMenuModal by remember { mutableStateOf(false) }
-    var showExitScanModal by remember { mutableStateOf(false) }
-    var exitBubbleOffsetX by remember { mutableFloatStateOf(0f) }
-    var exitBubbleOffsetY by remember { mutableFloatStateOf(0f) }
+    var showExitDialog by remember { mutableStateOf(false) }
+    var isExitingLegitimately by remember { mutableStateOf(false) }
+    var isAlarmTriggered by remember { mutableStateOf(false) }
+    var showAlarmUnlockDialog by remember { mutableStateOf(false) }
+    var hasEverBeenPinned by remember { mutableStateOf(false) }
     var manualUrlInput by remember { mutableStateOf("") }
     var pendingSaveCredential by remember { mutableStateOf<PendingSaveCredential?>(null) }
 
     var isAppPinned by remember { mutableStateOf(false) }
     var exitCodeInput by remember { mutableStateOf("") }
     var exitErrorMessage by remember { mutableStateOf<String?>(null) }
+    var alarmCodeInput by remember { mutableStateOf("") }
+    var alarmErrorMessage by remember { mutableStateOf<String?>(null) }
 
-    // Pantau status Sematkan Aplikasi (Screen Pinning / LockTaskMode)
+    // Pantau status Sematkan Aplikasi & Deteksi Percobaan Keluar Darurat (Pelanggaran)
     LaunchedEffect(isExamLocked) {
         if (isExamLocked) {
+            hasEverBeenPinned = false
+            isExitingLegitimately = false
             val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
             while (isExamLocked) {
                 val state = am?.lockTaskModeState ?: ActivityManager.LOCK_TASK_MODE_NONE
-                isAppPinned = (state != ActivityManager.LOCK_TASK_MODE_NONE)
-                delay(500L)
+                val pinned = (state != ActivityManager.LOCK_TASK_MODE_NONE)
+                isAppPinned = pinned
+                if (pinned) {
+                    hasEverBeenPinned = true
+                } else if (hasEverBeenPinned && !isExitingLegitimately && !isAlarmTriggered) {
+                    // Tindakan darurat (swipe-up tahan / tombol darurat) terdeteksi tanpa verifikasi kode Authenticator!
+                    isAlarmTriggered = true
+                    showAlarmUnlockDialog = false
+                    alarmCodeInput = ""
+                    alarmErrorMessage = null
+                    AlarmHelper.startAlarm(context)
+                }
+                delay(300L)
             }
         } else {
             isAppPinned = false
+            hasEverBeenPinned = false
+            isExitingLegitimately = false
+            if (isAlarmTriggered) {
+                AlarmHelper.stopAlarm()
+                isAlarmTriggered = false
+                showAlarmUnlockDialog = false
+            }
         }
     }
 
@@ -290,6 +319,7 @@ fun SimpleBrowserScreen(
         }
 
         onDispose {
+            AlarmHelper.stopAlarm()
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
             if (window != null) {
@@ -303,13 +333,20 @@ fun SimpleBrowserScreen(
     }
 
     // Kunci Tombol Back Fisik & Virtual
-    BackHandler(enabled = isExamLocked && showExitScanModal) {
-        showExitScanModal = false
+    BackHandler(enabled = isExamLocked && isAlarmTriggered) {
+        if (showAlarmUnlockDialog) {
+            showAlarmUnlockDialog = false
+            alarmErrorMessage = null
+        }
+    }
+
+    BackHandler(enabled = isExamLocked && showExitDialog) {
+        showExitDialog = false
         exitCodeInput = ""
         exitErrorMessage = null
     }
 
-    BackHandler(enabled = isExamLocked && !showExitScanModal) {
+    BackHandler(enabled = isExamLocked && !showExitDialog && !isAlarmTriggered) {
         // MATI TOTAL saat ujian terkunci
     }
 
@@ -547,7 +584,7 @@ fun SimpleBrowserScreen(
                                 override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                     progress = newProgress
                                     isLoading = newProgress < 100
-                                    if (newProgress >= 90) {
+                                    if (newProgress >= 90 && !hasPageLoadError) {
                                         isPageLoadedReady = true
                                     }
                                 }
@@ -652,38 +689,84 @@ fun SimpleBrowserScreen(
                                     """.trimIndent()
                                     view?.evaluateJavascript(passwordDetectorJs, null)
 
-                                    // Lakukan autofill jika sebelumnya siswa sudah menyimpan kata sandi untuk situs ini
-                                    val currentHost = try {
+                                    // Lakukan autofill universal jika siswa sudah menyimpan kredensial untuk situs ini
+                                    val parsedHost = try {
                                         if (!url.isNullOrBlank()) Uri.parse(url).host ?: "" else ""
                                     } catch (_: Exception) { "" }
+                                    val currentHost = if (parsedHost.isNotBlank()) parsedHost else (view?.url?.let { try { Uri.parse(it).host } catch(_: Exception) { null } } ?: "")
 
-                                    if (currentHost.isNotBlank()) {
-                                        val saved = preferences?.getWebCredential(currentHost)
-                                        if (saved != null) {
-                                            val safeUser = saved.first.replace("\\", "\\\\").replace("'", "\\'")
-                                            val safePass = saved.second.replace("\\", "\\\\").replace("'", "\\'")
-                                            val autoFillJs = """
-                                                (function() {
-                                                    setTimeout(function() {
-                                                        try {
-                                                            var pwd = document.querySelector('input[type="password"]');
-                                                            var usr = document.querySelector('input[type="text"], input[type="email"], input[name*="user"], input[name*="nis"], input[name*="login"], input[name*="id"]');
-                                                            if (usr && !usr.value) {
-                                                                usr.value = '$safeUser';
-                                                                usr.dispatchEvent(new Event('input', { bubbles: true }));
-                                                                usr.dispatchEvent(new Event('change', { bubbles: true }));
+                                    val saved = preferences?.getWebCredential(currentHost)
+                                    if (saved != null) {
+                                        val safeUser = saved.first.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "").replace("\r", "")
+                                        val safePass = saved.second.replace("\\", "\\\\").replace("'", "\\'").replace("\n", "").replace("\r", "")
+                                        val autoFillJs = """
+                                            (function() {
+                                                function setInputValue(el, val) {
+                                                    if (!el || !val) return;
+                                                    try {
+                                                        var desc = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+                                                        if (desc && desc.set) {
+                                                            desc.set.call(el, val);
+                                                        } else {
+                                                            el.value = val;
+                                                        }
+                                                    } catch(err) {
+                                                        el.value = val;
+                                                    }
+                                                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                                                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                                                }
+
+                                                function findUsernameInput(pwdEl) {
+                                                    if (!pwdEl) return null;
+                                                    if (pwdEl.form) {
+                                                        var inputs = Array.from(pwdEl.form.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"]):not([type="password"])'));
+                                                        if (inputs.length > 0) {
+                                                            var pwdIdx = Array.from(pwdEl.form.elements).indexOf(pwdEl);
+                                                            for (var i = inputs.length - 1; i >= 0; i--) {
+                                                                var idx = Array.from(pwdEl.form.elements).indexOf(inputs[i]);
+                                                                if (idx < pwdIdx) return inputs[i];
                                                             }
-                                                            if (pwd && !pwd.value) {
-                                                                pwd.value = '$safePass';
-                                                                pwd.dispatchEvent(new Event('input', { bubbles: true }));
-                                                                pwd.dispatchEvent(new Event('change', { bubbles: true }));
-                                                            }
-                                                        } catch(e) {}
-                                                    }, 300);
-                                                })();
-                                            """.trimIndent()
-                                            view?.evaluateJavascript(autoFillJs, null)
-                                        }
+                                                            return inputs[0];
+                                                        }
+                                                    }
+                                                    return document.querySelector('input[name*="user" i], input[name*="nis" i], input[name*="nopes" i], input[name*="login" i], input[name*="id" i], input[name*="peserta" i], input[id*="user" i], input[id*="nis" i], input[id*="login" i], input[type="email"], input[type="text"], input[type="number"], input[type="tel"], input[autocomplete="username"]');
+                                                }
+
+                                                function fillCredentials() {
+                                                    try {
+                                                        var pwd = document.querySelector('input[type="password"]');
+                                                        var usr = findUsernameInput(pwd);
+
+                                                        if (usr && !usr.value) {
+                                                            setInputValue(usr, '$safeUser');
+                                                        }
+                                                        if (pwd && !pwd.value) {
+                                                            setInputValue(pwd, '$safePass');
+                                                        }
+                                                    } catch(e) {}
+                                                }
+
+                                                // Eksekusi segera dan bertahap untuk menangani SPA (React, Vue, Moodle, Candy CBT)
+                                                fillCredentials();
+                                                setTimeout(fillCredentials, 150);
+                                                setTimeout(fillCredentials, 500);
+                                                setTimeout(fillCredentials, 1200);
+                                                setTimeout(fillCredentials, 2500);
+
+                                                // Otomatis isi jika siswa menyentuh/fokus ke kolom input
+                                                document.addEventListener('focusin', function(e) {
+                                                    if (e.target && (e.target.tagName === 'INPUT')) {
+                                                        fillCredentials();
+                                                    }
+                                                }, { passive: true });
+
+                                                if (window.MutationObserver) {
+                                                    new MutationObserver(fillCredentials).observe(document.body || document.documentElement, { childList: true, subtree: true });
+                                                }
+                                            })();
+                                        """.trimIndent()
+                                        view?.evaluateJavascript(autoFillJs, null)
                                     }
                                 }
 
@@ -752,9 +835,11 @@ fun SimpleBrowserScreen(
                     }
                 )
 
-                // Watermark halus penanda status Sematkan Aplikasi aktif jika siswa memilih "Mengerti"
-                if (isExamLocked && isAppPinned) {
-                    PinnedWatermarkOverlay()
+                // Bilah footer status di bagian bawah layar saat ujian berlangsung (menampilkan gembok & Build Time di sisi kiri)
+                if (isExamLocked && !isAlarmTriggered) {
+                    ExamStatusFooter(
+                        modifier = Modifier.align(Alignment.BottomCenter)
+                    )
                 }
 
                 // OVERLAY PERSIAPAN UJIAN DENGAN TOMBOL "MULAI"
@@ -920,60 +1005,31 @@ fun SimpleBrowserScreen(
                     )
                 }
 
-                // Tombol Balon Scanner QR Keluar Mengambang (Bisa Di-drag Bebas Kemana-mana)
-                if (isExamLocked && !showExitScanModal) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.88f),
-                        shadowElevation = 8.dp,
+                // Tombol Silang Sederhana di Pojok Kanan Atas untuk Keluar Ujian (Non-Floating)
+                if (isExamLocked && !isAlarmTriggered) {
+                    IconButton(
+                        onClick = {
+                            exitCodeInput = ""
+                            exitErrorMessage = null
+                            showExitDialog = true
+                        },
                         modifier = Modifier
                             .align(Alignment.TopEnd)
-                            .padding(end = 16.dp, top = 76.dp)
-                            .offset { IntOffset(exitBubbleOffsetX.roundToInt(), exitBubbleOffsetY.roundToInt()) }
-                            .pointerInput(Unit) {
-                                awaitEachGesture {
-                                    val down = awaitFirstDown(requireUnconsumed = false)
-                                    var dragged = false
-                                    var lastPos = down.position
-
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                        if (!change.pressed) {
-                                            if (!dragged) {
-                                                exitCodeInput = ""
-                                                exitErrorMessage = null
-                                                showExitScanModal = true
-                                            }
-                                            break
-                                        }
-                                        val diff = change.position - lastPos
-                                        if (!dragged && diff.getDistance() > 10f) {
-                                            dragged = true
-                                        }
-                                        if (dragged) {
-                                            exitBubbleOffsetX += diff.x
-                                            exitBubbleOffsetY += diff.y
-                                            change.consume()
-                                        }
-                                        lastPos = change.position
-                                    }
-                                }
-                            }
-                            .size(54.dp)
-                            .testTag("floating_exit_qr_bubble")
-                    ) {
-                        Box(
-                            contentAlignment = Alignment.Center,
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.QrCodeScanner,
-                                contentDescription = "Scan QR Keluar",
-                                tint = Color.White,
-                                modifier = Modifier.size(28.dp)
+                            .statusBarsPadding()
+                            .padding(top = 10.dp, end = 10.dp)
+                            .size(44.dp)
+                            .background(
+                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                                shape = CircleShape
                             )
-                        }
+                            .testTag("exit_exam_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Keluar Ujian",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(22.dp)
+                        )
                     }
                 }
             }
@@ -1031,68 +1087,38 @@ fun SimpleBrowserScreen(
             }
         }
 
-        // OVERLAY SCANNER QR KELUAR LANGSUNG DI LAYAR UTAMA (TANPA DIALOG, BEBAS BLANK HITAM)
-        if (showExitScanModal) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.94f)),
-                contentAlignment = Alignment.Center
-            ) {
-                // Tombol Silang (X) di Pojok Kanan Atas untuk menutup jika tidak sengaja terbuka
-                IconButton(
-                    onClick = {
-                        showExitScanModal = false
-                        exitCodeInput = ""
-                        exitErrorMessage = null
-                    },
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .statusBarsPadding()
-                        .padding(16.dp)
-                        .size(48.dp)
-                        .testTag("close_exit_scanner_button")
-                ) {
+        // DIALOG KELUAR UJIAN (INPUT KODE AUTHENTICATOR PENGAWAS, TANPA KAMERA SCANNER)
+        if (showExitDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showExitDialog = false
+                    exitCodeInput = ""
+                    exitErrorMessage = null
+                },
+                icon = {
                     Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Tutup Scanner",
-                        tint = Color.White,
-                        modifier = Modifier.size(28.dp)
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = "Kunci",
+                        tint = MaterialTheme.colorScheme.primary
                     )
-                }
-
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                    modifier = Modifier.padding(horizontal = 24.dp)
-                ) {
-                    // Kotak Kamera Scan QR Keluar langsung di jendela utama (jernih dan responsif)
-                    CameraQrScannerBox(
-                        boxSize = 220.dp,
-                        onQrDetected = { scannedCode ->
-                            if (QrCodeGenerator.isTokenValid(scannedCode)) {
-                                try {
-                                    activity?.stopLockTask()
-                                } catch (_: Exception) {}
-                                isExamLocked = false
-                                showExitScanModal = false
-                                activity?.finish()
-                            }
-                        }
-                    )
-
+                },
+                title = {
                     Text(
-                        text = "Masukkan 6 digit kode dari Google Authenticator:",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = Color.White.copy(alpha = 0.85f),
-                        textAlign = TextAlign.Center
+                        text = "Keluar Ujian",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
                     )
-
-                    // Input Numerik Sederhana & Tombol Keluar
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                },
+                text = {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth()
                     ) {
+                        Text(
+                            text = "Masukkan 6 digit kode dari Google Authenticator pengawas untuk mengakhiri ujian:",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+
                         OutlinedTextField(
                             value = exitCodeInput,
                             onValueChange = { input ->
@@ -1101,13 +1127,7 @@ fun SimpleBrowserScreen(
                                     exitErrorMessage = null
                                 }
                             },
-                            placeholder = {
-                                Text(
-                                    text = "6 digit kode...",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = Color.White.copy(alpha = 0.5f)
-                                )
-                            },
+                            placeholder = { Text("6 digit kode") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(
                                 keyboardType = KeyboardType.Number,
@@ -1115,63 +1135,196 @@ fun SimpleBrowserScreen(
                             ),
                             keyboardActions = KeyboardActions(
                                 onDone = {
-                                    if (QrCodeGenerator.isTokenValid(exitCodeInput)) {
+                                    if (TotpManager.isCodeValid(exitCodeInput)) {
+                                        isExitingLegitimately = true
                                         try {
                                             activity?.stopLockTask()
                                         } catch (_: Exception) {}
                                         isExamLocked = false
-                                        showExitScanModal = false
+                                        showExitDialog = false
                                         activity?.finish()
                                     } else {
                                         exitErrorMessage = "Kode tidak valid"
                                     }
                                 }
                             ),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = Color.White.copy(alpha = 0.4f),
-                                cursorColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
-                                .width(160.dp)
-                                .height(52.dp)
+                                .fillMaxWidth()
                                 .testTag("exit_numeric_input")
                         )
 
-                        Button(
-                            onClick = {
-                                if (QrCodeGenerator.isTokenValid(exitCodeInput)) {
-                                    try {
-                                        activity?.stopLockTask()
-                                    } catch (_: Exception) {}
-                                    isExamLocked = false
-                                    showExitScanModal = false
-                                    activity?.finish()
-                                } else {
-                                    exitErrorMessage = "Kode tidak valid"
-                                }
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .height(52.dp)
-                                .testTag("exit_numeric_button")
-                        ) {
-                            Text("Keluar", fontWeight = FontWeight.Bold)
+                        if (exitErrorMessage != null) {
+                            Text(
+                                text = exitErrorMessage!!,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         }
                     }
-
-                    if (exitErrorMessage != null) {
-                        Text(
-                            text = exitErrorMessage!!,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (TotpManager.isCodeValid(exitCodeInput)) {
+                                isExitingLegitimately = true
+                                try {
+                                    activity?.stopLockTask()
+                                } catch (_: Exception) {}
+                                isExamLocked = false
+                                showExitDialog = false
+                                activity?.finish()
+                            } else {
+                                exitErrorMessage = "Kode tidak valid"
+                            }
+                        },
+                        modifier = Modifier.testTag("exit_numeric_button")
+                    ) {
+                        Text("Keluar", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            showExitDialog = false
+                            exitCodeInput = ""
+                            exitErrorMessage = null
+                        },
+                        modifier = Modifier.testTag("cancel_exit_button")
+                    ) {
+                        Text("Batal")
                     }
                 }
+            )
+        }
+
+        // LAYAR MERAH PENUH KETIKA KELUAR SEMATAN TANPA AUTENTIKASI (SIRENE 100% AKTIF)
+        if (isAlarmTriggered) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFFD32F2F))
+                    .clickable {
+                        alarmCodeInput = ""
+                        alarmErrorMessage = null
+                        showAlarmUnlockDialog = true
+                    }
+                    .testTag("alarm_violation_screen"),
+                contentAlignment = Alignment.Center
+            ) {
+                // Layar merah polos dengan ikon gembok minimalis (ketuk layar untuk verifikasi pengawas)
+                Icon(
+                    imageVector = Icons.Default.Lock,
+                    contentDescription = "Ketuk untuk memasukkan kode pengawas",
+                    tint = Color.White.copy(alpha = 0.85f),
+                    modifier = Modifier.size(72.dp)
+                )
             }
+        }
+
+        // DIALOG VERIFIKASI PENGAWAS UNTUK MEMATIKAN ALARM
+        if (isAlarmTriggered && showAlarmUnlockDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showAlarmUnlockDialog = false
+                    alarmErrorMessage = null
+                },
+                icon = {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                },
+                title = {
+                    Text(
+                        text = "Verifikasi Pengawas",
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                text = {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "Masukkan 6 digit kode dari Google Authenticator untuk mematikan alarm:",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        OutlinedTextField(
+                            value = alarmCodeInput,
+                            onValueChange = { input ->
+                                if (input.length <= 6 && input.all { it.isDigit() }) {
+                                    alarmCodeInput = input
+                                    alarmErrorMessage = null
+                                }
+                            },
+                            placeholder = { Text("6 digit kode") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Number,
+                                imeAction = ImeAction.Done
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("alarm_unlock_input")
+                        )
+                        if (alarmErrorMessage != null) {
+                            Text(
+                                text = alarmErrorMessage!!,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            if (TotpManager.isCodeValid(alarmCodeInput)) {
+                                AlarmHelper.stopAlarm()
+                                isAlarmTriggered = false
+                                showAlarmUnlockDialog = false
+                                alarmCodeInput = ""
+                                alarmErrorMessage = null
+                                try {
+                                    activity?.startLockTask()
+                                } catch (_: Exception) {}
+                            } else {
+                                alarmErrorMessage = "Kode pengawas tidak valid"
+                            }
+                        },
+                        modifier = Modifier.testTag("alarm_resume_button")
+                    ) {
+                        Text("Lanjut Ujian")
+                    }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = {
+                            if (TotpManager.isCodeValid(alarmCodeInput)) {
+                                AlarmHelper.stopAlarm()
+                                isExitingLegitimately = true
+                                isAlarmTriggered = false
+                                showAlarmUnlockDialog = false
+                                alarmCodeInput = ""
+                                alarmErrorMessage = null
+                                try {
+                                    activity?.stopLockTask()
+                                } catch (_: Exception) {}
+                                isExamLocked = false
+                                activity?.finish()
+                            } else {
+                                alarmErrorMessage = "Kode pengawas tidak valid"
+                            }
+                        },
+                        modifier = Modifier.testTag("alarm_exit_button")
+                    ) {
+                        Text("Keluar", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            )
         }
 
         // DIALOG TAWARAN SIMPAN KATA SANDI
@@ -1242,42 +1395,42 @@ fun SimpleBrowserScreen(
 }
 
 /**
- * Watermark halus yang menandakan bahwa siswa telah menyetujui "Sematkan Aplikasi" (App Pinning).
- * Tampil transparan dan diagonal di layar sehingga pengawas mudah melihatnya tanpa mengganggu keterbacaan soal.
+ * Bilah footer status profesional di bagian bawah layar saat ujian berlangsung.
+ * Menampilkan ikon gembok dan tanggal/waktu build otomatis di sisi kiri.
  */
 @Composable
-fun PinnedWatermarkOverlay(modifier: Modifier = Modifier) {
-    Box(
+fun ExamStatusFooter(modifier: Modifier = Modifier) {
+    Surface(
         modifier = modifier
-            .fillMaxSize()
-            .testTag("pinned_watermark_overlay"),
-        contentAlignment = Alignment.Center
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .testTag("exam_status_footer"),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
+        tonalElevation = 2.dp
     ) {
-        Column(
+        Row(
             modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer { rotationZ = -28f },
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceEvenly
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Start
         ) {
-            repeat(6) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    repeat(2) {
-                        Text(
-                            text = "SEMATKAN AKTIF",
-                            style = MaterialTheme.typography.titleLarge.copy(
-                                fontWeight = FontWeight.ExtraBold,
-                                letterSpacing = 3.sp
-                            ),
-                            color = Color(0xFF1B5E20).copy(alpha = 0.08f),
-                            maxLines = 1
-                        )
-                    }
-                }
-            }
+            Icon(
+                imageVector = Icons.Default.Lock,
+                contentDescription = "Status Terkunci",
+                tint = Color(0xFF2E7D32),
+                modifier = Modifier.size(13.dp)
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "Build: ${BuildConfig.BUILD_TIME}",
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium,
+                    letterSpacing = 0.3.sp
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

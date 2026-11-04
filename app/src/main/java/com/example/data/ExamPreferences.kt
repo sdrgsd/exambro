@@ -122,11 +122,18 @@ class ExamPreferences(context: Context) {
     }
 
     fun getWebCredential(host: String): Pair<String, String>? {
-        val list = getWebCredentials(host)
-        if (list.isNotEmpty()) {
-            return Pair(list.first().username, list.first().password)
-        }
+        val all = getAllCredentials()
+        if (all.isEmpty()) return null
+
         val norm = normalizeHost(host)
+        if (norm.isNotBlank()) {
+            val exact = all.firstOrNull { it.host == norm }
+            if (exact != null) return Pair(exact.username, exact.password)
+
+            val matches = all.filter { it.host.contains(norm) || norm.contains(it.host) }
+            if (matches.isNotEmpty()) return Pair(matches.first().username, matches.first().password)
+        }
+
         val u = prefs.getString("cred_user_$norm", null)
         val p = prefs.getString("cred_pass_$norm", null)
         if (!p.isNullOrEmpty()) return Pair(u ?: "", p)
@@ -135,6 +142,11 @@ class ExamPreferences(context: Context) {
         val ru = prefs.getString("cred_user_$rawTrim", null)
         val rp = prefs.getString("cred_pass_$rawTrim", null)
         if (!rp.isNullOrEmpty()) return Pair(ru ?: "", rp)
+
+        // Fallback jika siswa hanya memiliki 1 akun tersimpan
+        if (all.size == 1) {
+            return Pair(all.first().username, all.first().password)
+        }
 
         return null
     }
